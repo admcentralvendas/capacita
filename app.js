@@ -1442,10 +1442,10 @@ const Desenvolvimento = {
     const autoNota = ciclo.avaliacoes?.[avaliadoUid + '_auto']?.nota
                   ?? ciclo.avaliacoes?.[avaliadoUid + '_autos']?.nota;
     const autoComent = ciclo.avaliacoes?.[avaliadoUid + '_auto']?.comentario
-                    ?? ciclo.avaliacoes?.[avaliadoUid + '_autos']?.comentario || '';
+                    ?? ciclo.avaliacoes?.[avaliadoUid + '_autos']?.comentario'';
     const m360   = ciclo.media_360?.[avaliadoUid];
     const gestNota = ciclo.avaliacoes_gestor?.[avaliadoUid]?.nota;
-    const gestComent = ciclo.avaliacoes_gestor?.[avaliadoUid]?.comentario || '';
+    const gestComent = ciclo.avaliacoes_gestor?.[avaliadoUid]?.comentario'';
 
     // Busca comentários 360 (sem identificar autor)
     const snap360 = await db.collection('avaliacoes_360')
