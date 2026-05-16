@@ -1352,7 +1352,7 @@ const Desenvolvimento = {
           <tbody>
             ${uids.map(uid => {
               const u = nomes[uid];
-              const autoNota = avaliacoes[uid + '_autos']?.nota ?? avaliacoes[uid + '_auto']?.nota;
+              const autoNota = avaliacoes[uid + '_autos']?.nota || avaliacoes[uid + '_auto']?.nota || null;
               const m360 = media360[uid];
               const gestNota = avalGestor[uid]?.nota;
               const partes = [autoNota, m360, gestNota].filter(v => v != null);
@@ -1440,12 +1440,12 @@ const Desenvolvimento = {
     const avaliado = avaliadoDoc.data();
 
     const autoNota = ciclo.avaliacoes?.[avaliadoUid + '_auto']?.nota
-                  ?? ciclo.avaliacoes?.[avaliadoUid + '_autos']?.nota;
+                  || ciclo.avaliacoes?.[avaliadoUid + '_autos']?.nota || null;
     const autoComent = ciclo.avaliacoes?.[avaliadoUid + '_auto']?.comentario
-                    ?? ciclo.avaliacoes?.[avaliadoUid + '_autos']?.comentario'';
+                    || ciclo.avaliacoes?.[avaliadoUid + '_autos']?.comentario || '';
     const m360   = ciclo.media_360?.[avaliadoUid];
     const gestNota = ciclo.avaliacoes_gestor?.[avaliadoUid]?.nota;
-    const gestComent = ciclo.avaliacoes_gestor?.[avaliadoUid]?.comentario'';
+    const gestComent = ciclo.avaliacoes_gestor?.[avaliadoUid]?.comentario || '';
 
     // Busca comentários 360 (sem identificar autor)
     const snap360 = await db.collection('avaliacoes_360')
