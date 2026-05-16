@@ -1020,10 +1020,30 @@ const Desenvolvimento = {
       .get();
     const pendentes360 = pendSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    // Feedbacks recebidos
-    const fbSnap = await db.collection('feedbacks').where('destinatario_uid', '==', uid).get();
-    const feedbacks = fbSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
+    // Feedbacks recebidos (colaborador vê os próprios; gestor vê os da equipe)
+    let feedbacks = [];
+    if (isGestor) {
+      // Busca uids da equipe
+      const equipSnap = await db.collection('usuarios').get();
+      const equipUids = equipSnap.docs
+        .map(d => d.data())
+        .filter(u => !setor || u.setor === setor)
+        .map(u => u.uid);
+      // Firestore não suporta where-in com mais de 10; busca todos e filtra
+      const fbAll = await db.collection('feedbacks').get();
+      feedbacks = fbAll.docs
+        .map(d => ({ id: d.id, ...d.data() }))
+        .filter(f => equipUids.includes(f.destinatario_uid))
+        .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
+      // Enriquece com nome do destinatário
+      const nomeMap = {};
+      equipSnap.docs.forEach(d => { nomeMap[d.data().uid] = d.data().nome; });
+      feedbacks = feedbacks.map(f => ({ ...f, destinatario_nome: nomeMap[f.destinatario_uid] || '?' }));
+    } else {
+      const fbSnap = await db.collection('feedbacks').where('destinatario_uid', '==', uid).get();
+      feedbacks = fbSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+        .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
+    }
 
     // PDIs do usuário
     const pdiSnap = await db.collection('pdis').where('uid', '==', uid).get();
@@ -1064,13 +1084,21 @@ const Desenvolvimento = {
 
       <!-- FEEDBACKS -->
       <div class="dev-section">
-        <h2 class="dev-section-title"><i class="ti ti-messages"></i> Feedbacks recebidos</h2>
+        <h2 class="dev-section-title">
+          <i class="ti ti-messages"></i>
+          ${isGestor ? 'Feedbacks da equipe' : 'Feedbacks recebidos'}
+          ${feedbacks.length > 0 ? `<span class="fb-count">${feedbacks.length}</span>` : ''}
+          ${isGestor && feedbacks.length > 5 ? `<button class="btn-icon" style="margin-left:auto;font-size:12px" onclick="Desenvolvimento.verTodosFeedbacks()"><i class="ti ti-eye"></i> Ver todos</button>` : ''}
+        </h2>
         ${feedbacks.length === 0
-          ? `<p class="dev-empty">Nenhum feedback recebido ainda</p>`
-          : feedbacks.slice(0, 5).map(f => `
+          ? `<p class="dev-empty">${isGestor ? 'Nenhum feedback registrado na equipe ainda' : 'Nenhum feedback recebido ainda'}</p>`
+          : feedbacks.slice(0, isGestor ? 10 : 5).map(f => `
             <div class="feedback-card">
               <div class="feedback-header">
-                <span class="feedback-tipo">${f.tipo === 'positivo' ? '👍 Positivo' : f.tipo === 'melhoria' ? '💡 Melhoria' : '💬 Geral'}</span>
+                <div style="display:flex;align-items:center;gap:8px">
+                  ${isGestor ? `<span class="feedback-destinatario">${f.destinatario_nome}</span><span style="color:var(--text-3)">·</span>` : ''}
+                  <span class="feedback-tipo">${f.tipo === 'positivo' ? '👍 Positivo' : f.tipo === 'melhoria' ? '💡 Melhoria' : '💬 Geral'}</span>
+                </div>
                 <span class="feedback-data">${Desenvolvimento.fmtTs(f.criadoEm)}</span>
               </div>
               <p class="feedback-texto">${f.mensagem}</p>
@@ -1973,6 +2001,71 @@ const Desenvolvimento = {
     }
     document.getElementById('modal-pdi').remove();
     this.render();
+  },
+
+  // ─── VER TODOS OS FEEDBACKS (gestor) ────────
+
+  async verTodosFeedbacks() {
+    const setor = App.meuSetor();
+    const equipSnap = await db.collection('usuarios').get();
+    const nomeMap = {};
+    const equipUids = equipSnap.docs
+      .map(d => d.data())
+      .filter(u => !setor || u.setor === setor)
+      .map(u => { nomeMap[u.uid] = u.nome; return u.uid; });
+
+    const fbAll = await db.collection('feedbacks').get();
+    const feedbacks = fbAll.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(f => equipUids.includes(f.destinatario_uid))
+      .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0))
+      .map(f => ({ ...f, destinatario_nome: nomeMap[f.destinatario_uid] || '?' }));
+
+    // Agrupa por colaborador
+    const porColab = {};
+    feedbacks.forEach(f => {
+      if (!porColab[f.destinatario_uid]) porColab[f.destinatario_uid] = { nome: f.destinatario_nome, feedbacks: [] };
+      porColab[f.destinatario_uid].feedbacks.push(f);
+    });
+
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'modal-todos-fb';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:620px">
+        <div class="modal-header">
+          <h3>Feedbacks da equipe</h3>
+          <button class="btn-icon" onclick="document.getElementById('modal-todos-fb').remove()"><i class="ti ti-x"></i></button>
+        </div>
+        <div class="modal-body" style="max-height:72vh;overflow-y:auto">
+          ${Object.values(porColab).map(c => `
+            <div style="margin-bottom:24px">
+              <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
+                <div style="width:32px;height:32px;border-radius:50%;background:var(--accent-bg);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">
+                  ${App.initials(c.nome)}
+                </div>
+                <div>
+                  <p style="font-weight:600;font-size:14px">${c.nome}</p>
+                  <p style="font-size:11px;color:var(--text-3)">${c.feedbacks.length} feedback${c.feedbacks.length !== 1 ? 's' : ''} · ${c.feedbacks.filter(f=>f.tipo==='positivo').length} positivos · ${c.feedbacks.filter(f=>f.tipo==='melhoria').length} melhorias</p>
+                </div>
+              </div>
+              ${c.feedbacks.map(f => `
+                <div class="feedback-card" style="margin-left:42px">
+                  <div class="feedback-header">
+                    <span class="feedback-tipo">${f.tipo === 'positivo' ? '👍 Positivo' : f.tipo === 'melhoria' ? '💡 Melhoria' : '💬 Geral'}</span>
+                    <span class="feedback-data">${Desenvolvimento.fmtTs(f.criadoEm)}</span>
+                  </div>
+                  <p class="feedback-texto">${f.mensagem}</p>
+                  <p class="feedback-de">— Anônimo</p>
+                </div>`).join('')}
+            </div>`).join('')}
+          ${Object.keys(porColab).length === 0 ? '<p class="dev-empty">Nenhum feedback registrado ainda</p>' : ''}
+        </div>
+        <div class="modal-footer">
+          <button class="btn-primary" onclick="document.getElementById('modal-todos-fb').remove()">Fechar</button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
   },
 
   // ─── UTILS ──────────────────────────────────
