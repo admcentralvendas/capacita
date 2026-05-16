@@ -107,9 +107,6 @@ const App = {
             <a class="nav-item" onclick="App.showPage('solicitacoes')" data-page="solicitacoes">
               <i class="ti ti-file-text"></i> Solicitações
             </a>
-            <a class="nav-item" onclick="App.showPage('banco-horas')" data-page="banco-horas">
-              <i class="ti ti-clock"></i> Banco de horas
-            </a>
             <a class="nav-item" onclick="App.showPage('desenvolvimento')" data-page="desenvolvimento">
               <i class="ti ti-road"></i> Desenvolvimento
             </a>
@@ -146,7 +143,6 @@ const App = {
     switch(page) {
       case 'calendario':   Calendario.render(); break;
       case 'solicitacoes': Solicitacoes.render(); break;
-      case 'banco-horas':  BancoHoras.render(); break;
       case 'aprovacoes':   Aprovacoes.render(); break;
       case 'equipe':       Equipe.render(); break;
       case 'desenvolvimento': Desenvolvimento.render(); break;
@@ -293,10 +289,7 @@ const Calendario = {
           <span class="saldo-label"><i class="ti ti-sun"></i> Folgas disponíveis</span>
           <span class="saldo-num">${u.saldo_folgas} dias</span>
         </div>
-        <div class="saldo-card">
-          <span class="saldo-label"><i class="ti ti-clock"></i> Banco de horas</span>
-          <span class="saldo-num">${u.banco_horas > 0 ? '+' : ''}${u.banco_horas}h</span>
-        </div>
+
       </div>
       <div class="cal-nav">
         <button class="btn-icon" onclick="Calendario.prevMes()"><i class="ti ti-chevron-left"></i></button>
@@ -358,7 +351,7 @@ const Solicitacoes = {
       <div class="table-wrap">
         <table class="table">
           <thead>
-            <tr><th>Tipo</th><th>Início</th><th>Fim</th><th>Dias</th><th>Observação</th><th>Status</th></tr>
+            <tr><th>Tipo</th><th>Data</th><th>Período</th><th>Observação</th><th>Status</th></tr>
           </thead>
           <tbody>
             ${lista.length === 0
@@ -367,8 +360,7 @@ const Solicitacoes = {
                 <tr>
                   <td><span class="tipo-pill tipo-${s.tipo}">${App.tipoLabel(s.tipo)}</span></td>
                   <td>${App.formatDate(s.data_inicio)}</td>
-                  <td>${App.formatDate(s.data_fim)}</td>
-                  <td>${s.dias}</td>
+                  <td>${s.modo === 'horario' ? s.hora_inicio + ' – ' + s.hora_fim + ' (' + s.horas + 'h)' : s.dias + ' dia' + (s.dias !== 1 ? 's' : '')}</td>
                   <td class="obs-cell">${s.observacao || '—'}</td>
                   <td>${App.statusBadge(s.status)}</td>
                 </tr>`).join('')
@@ -393,25 +385,59 @@ const Solicitacoes = {
         </div>
         <div class="modal-body">
           <label class="form-label">Tipo</label>
-          <select class="inp" id="sol-tipo">
+          <select class="inp" id="sol-tipo" onchange="Solicitacoes.onTipoChange()">
             <option value="ferias">Férias</option>
             <option value="folga">Folga avulsa</option>
             <option value="atestado">Atestado médico</option>
             <option value="banco_horas">Compensação banco de horas</option>
           </select>
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-            <div>
-              <label class="form-label">Data início</label>
-              <input class="inp" type="date" id="sol-inicio">
-            </div>
-            <div>
-              <label class="form-label">Data fim</label>
-              <input class="inp" type="date" id="sol-fim">
-            </div>
+
+          <label class="form-label" style="margin-top:12px">Período</label>
+          <div style="display:flex;gap:10px;margin-bottom:10px">
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer">
+              <input type="radio" name="sol-periodo" id="rad-dia" value="dia" checked onchange="Solicitacoes.onPeriodoChange()"> Dia(s) inteiro(s)
+            </label>
+            <label style="display:flex;align-items:center;gap:6px;font-size:13px;cursor:pointer" id="lbl-horas-rad">
+              <input type="radio" name="sol-periodo" id="rad-horas" value="horas" onchange="Solicitacoes.onPeriodoChange()"> Horário específico
+            </label>
           </div>
-          <div id="sol-dias-info" style="font-size:13px;color:#6B6B66;margin:8px 0 0;min-height:20px"></div>
+
+          <!-- Modo dia inteiro -->
+          <div id="bloco-dias">
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+              <div>
+                <label class="form-label">Data início</label>
+                <input class="inp" type="date" id="sol-inicio">
+              </div>
+              <div>
+                <label class="form-label">Data fim</label>
+                <input class="inp" type="date" id="sol-fim">
+              </div>
+            </div>
+            <div id="sol-dias-info" style="font-size:13px;color:#6B6B66;margin:8px 0 0;min-height:20px"></div>
+          </div>
+
+          <!-- Modo horário específico -->
+          <div id="bloco-horas" style="display:none">
+            <div>
+              <label class="form-label">Data</label>
+              <input class="inp" type="date" id="sol-data-hora">
+            </div>
+            <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+              <div>
+                <label class="form-label">Hora início</label>
+                <input class="inp" type="time" id="sol-hora-ini" value="08:00">
+              </div>
+              <div>
+                <label class="form-label">Hora fim</label>
+                <input class="inp" type="time" id="sol-hora-fim" value="12:00">
+              </div>
+            </div>
+            <div id="sol-horas-info" style="font-size:13px;color:#6B6B66;margin:8px 0 0;min-height:20px"></div>
+          </div>
+
           <label class="form-label" style="margin-top:12px">Observação <span style="font-weight:400;color:#A0A09A">(opcional)</span></label>
-          <textarea class="inp" id="sol-obs" rows="3" placeholder="Informe mais detalhes se necessário..."></textarea>
+          <textarea class="inp" id="sol-obs" rows="2" placeholder="Informe mais detalhes se necessário..."></textarea>
           <p id="sol-erro" style="color:#E24B4A;font-size:13px;margin:8px 0 0;min-height:16px"></p>
         </div>
         <div class="modal-footer">
@@ -424,6 +450,28 @@ const Solicitacoes = {
     ['sol-inicio', 'sol-fim'].forEach(id => {
       document.getElementById(id).addEventListener('change', Solicitacoes.updateDias);
     });
+    ['sol-hora-ini', 'sol-hora-fim', 'sol-data-hora'].forEach(id => {
+      document.getElementById(id).addEventListener('change', Solicitacoes.updateHoras);
+    });
+  },
+
+  onTipoChange() {
+    const tipo = document.getElementById('sol-tipo').value;
+    const lblHoras = document.getElementById('lbl-horas-rad');
+    // Férias só permite dias inteiros
+    if (tipo === 'ferias') {
+      document.getElementById('rad-dia').checked = true;
+      Solicitacoes.onPeriodoChange();
+      if (lblHoras) lblHoras.style.opacity = '0.4';
+    } else {
+      if (lblHoras) lblHoras.style.opacity = '1';
+    }
+  },
+
+  onPeriodoChange() {
+    const isDia = document.getElementById('rad-dia').checked;
+    document.getElementById('bloco-dias').style.display = isDia ? 'block' : 'none';
+    document.getElementById('bloco-horas').style.display = isDia ? 'none' : 'block';
   },
 
   updateDias() {
@@ -438,40 +486,64 @@ const Solicitacoes = {
     }
   },
 
+  updateHoras() {
+    const ini = document.getElementById('sol-hora-ini').value;
+    const fim = document.getElementById('sol-hora-fim').value;
+    const info = document.getElementById('sol-horas-info');
+    if (ini && fim) {
+      const [hi, mi] = ini.split(':').map(Number);
+      const [hf, mf] = fim.split(':').map(Number);
+      const totalMin = (hf * 60 + mf) - (hi * 60 + mi);
+      if (totalMin > 0) {
+        const h = Math.floor(totalMin / 60), m = totalMin % 60;
+        info.textContent = `${h}h${m > 0 ? m + 'min' : ''} solicitado(s)`;
+      } else {
+        info.textContent = '';
+      }
+    }
+  },
+
   async enviar() {
     const tipo   = document.getElementById('sol-tipo').value;
-    const inicio = document.getElementById('sol-inicio').value;
-    const fim    = document.getElementById('sol-fim').value;
     const obs    = document.getElementById('sol-obs').value.trim();
     const erro   = document.getElementById('sol-erro');
+    const isDia  = document.getElementById('rad-dia').checked;
+    const u      = App.currentUserData;
+    let dados    = {};
 
-    if (!inicio || !fim) { erro.textContent = 'Preencha as datas.'; return; }
-    if (fim < inicio)    { erro.textContent = 'A data fim deve ser após a data início.'; return; }
-
-    const dias = App.daysBetween(inicio, fim);
-    const u = App.currentUserData;
-
-    if (tipo === 'ferias' && dias > u.saldo_ferias) {
-      erro.textContent = `Saldo insuficiente. Você tem ${u.saldo_ferias} dias de férias.`; return;
-    }
-    if (tipo === 'folga' && dias > u.saldo_folgas) {
-      erro.textContent = `Saldo insuficiente. Você tem ${u.saldo_folgas} dia(s) de folga.`; return;
+    if (isDia) {
+      const inicio = document.getElementById('sol-inicio').value;
+      const fim    = document.getElementById('sol-fim').value;
+      if (!inicio || !fim) { erro.textContent = 'Preencha as datas.'; return; }
+      if (fim < inicio)    { erro.textContent = 'A data fim deve ser após a data início.'; return; }
+      const dias = App.daysBetween(inicio, fim);
+      if (tipo === 'ferias' && dias > u.saldo_ferias) {
+        erro.textContent = `Saldo insuficiente. Você tem ${u.saldo_ferias} dias de férias.`; return;
+      }
+      if (tipo === 'folga' && dias > u.saldo_folgas) {
+        erro.textContent = `Saldo insuficiente. Você tem ${u.saldo_folgas} dia(s) de folga.`; return;
+      }
+      dados = { data_inicio: inicio, data_fim: fim, dias, modo: 'dia_inteiro' };
+    } else {
+      const data    = document.getElementById('sol-data-hora').value;
+      const horaIni = document.getElementById('sol-hora-ini').value;
+      const horaFim = document.getElementById('sol-hora-fim').value;
+      if (!data || !horaIni || !horaFim) { erro.textContent = 'Preencha data e horários.'; return; }
+      const [hi, mi] = horaIni.split(':').map(Number);
+      const [hf, mf] = horaFim.split(':').map(Number);
+      const totalMin = (hf * 60 + mf) - (hi * 60 + mi);
+      if (totalMin <= 0) { erro.textContent = 'Hora fim deve ser após a hora início.'; return; }
+      const horas = +(totalMin / 60).toFixed(2);
+      dados = { data_inicio: data, data_fim: data, dias: 0, horas, hora_inicio: horaIni, hora_fim: horaFim, modo: 'horario' };
     }
 
     erro.textContent = '';
     try {
       await db.collection('solicitacoes').add({
-        uid: u.uid,
-        nome: u.nome,
-        funcao: u.funcao || '',
-        setor: u.setor || '',
-        departamento: u.departamento || '',
-        tipo,
-        data_inicio: inicio,
-        data_fim: fim,
-        dias,
-        observacao: obs,
-        status: 'pendente',
+        uid: u.uid, nome: u.nome,
+        funcao: u.funcao || '', setor: u.setor || '', departamento: u.departamento || '',
+        tipo, observacao: obs, status: 'pendente',
+        ...dados,
         criadoEm: firebase.firestore.FieldValue.serverTimestamp()
       });
       document.getElementById('modal-nova').remove();
@@ -686,7 +758,6 @@ const Equipe = {
 
     const setor = App.meuSetor();
     const snap = await db.collection('usuarios').get();
-    // Gestor vê só o próprio setor (se tiver setor definido)
     const usuarios = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
       .filter(u => !setor || u.setor === setor);
@@ -697,6 +768,9 @@ const Equipe = {
           <h1 class="page-title">Equipe</h1>
           <p class="page-sub">${usuarios.length} colaborador${usuarios.length !== 1 ? 'es' : ''}${setor ? ' · ' + setor : ''}</p>
         </div>
+        <button class="btn-primary" onclick="Equipe.openNovoColaborador()">
+          <i class="ti ti-user-plus"></i> Novo colaborador
+        </button>
       </div>
       <div class="equipe-grid">
         ${usuarios.map(u => `
@@ -708,7 +782,6 @@ const Equipe = {
             <div class="equipe-saldos">
               <span title="Férias"><i class="ti ti-beach"></i> ${u.saldo_ferias || 0}d</span>
               <span title="Folgas"><i class="ti ti-sun"></i> ${u.saldo_folgas || 0}d</span>
-              <span title="Banco de horas"><i class="ti ti-clock"></i> ${u.banco_horas || 0}h</span>
             </div>
             <button class="btn-secondary" style="width:100%;margin-top:8px;font-size:12px"
               onclick="Equipe.editarColaborador('${u.id}')">
@@ -717,6 +790,127 @@ const Equipe = {
           </div>`).join('')}
       </div>
     `;
+  },
+
+  openNovoColaborador() {
+    const setor = App.meuSetor();
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'modal-novo-colab';
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Novo colaborador</h3>
+          <button class="btn-icon" onclick="document.getElementById('modal-novo-colab').remove()"><i class="ti ti-x"></i></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">
+            Cadastre o colaborador. Ele receberá um e-mail para criar a senha no primeiro acesso.
+          </p>
+          <label class="form-label">Nome completo</label>
+          <input class="inp" id="nc-nome" placeholder="Nome do colaborador">
+
+          <label class="form-label" style="margin-top:12px">E-mail</label>
+          <input class="inp" type="email" id="nc-email" placeholder="email@empresa.com">
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+            <div>
+              <label class="form-label">Função</label>
+              <input class="inp" id="nc-funcao" placeholder="Ex: Consultor">
+            </div>
+            <div>
+              <label class="form-label">Setor</label>
+              <input class="inp" id="nc-setor" value="${setor}" placeholder="Setor">
+            </div>
+          </div>
+
+          <label class="form-label" style="margin-top:12px">Departamento</label>
+          <input class="inp" id="nc-depto" placeholder="Ex: Comercial">
+
+          <label class="form-label" style="margin-top:12px">Papel</label>
+          <select class="inp" id="nc-papel">
+            <option value="colaborador">Colaborador</option>
+            <option value="gestor">Gestor</option>
+          </select>
+
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
+            <div>
+              <label class="form-label">Saldo férias (dias)</label>
+              <input class="inp" type="number" id="nc-ferias" value="30">
+            </div>
+            <div>
+              <label class="form-label">Saldo folgas (dias)</label>
+              <input class="inp" type="number" id="nc-folgas" value="0">
+            </div>
+          </div>
+
+          <label class="form-label" style="margin-top:12px">Data de admissão</label>
+          <input class="inp" type="date" id="nc-admissao">
+
+          <div style="margin-top:14px;padding:12px;background:#F5F4F0;border-radius:8px;font-size:12px;color:#6B6B66">
+            <i class="ti ti-info-circle"></i> Uma senha provisória será gerada. O colaborador poderá alterá-la no primeiro acesso.
+          </div>
+          <p id="nc-erro" style="color:#E24B4A;font-size:13px;margin:8px 0 0;min-height:16px"></p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="document.getElementById('modal-novo-colab').remove()">Cancelar</button>
+          <button class="btn-primary" id="nc-btn" onclick="Equipe.salvarNovoColaborador()">Cadastrar</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  },
+
+  async salvarNovoColaborador() {
+    const nome     = document.getElementById('nc-nome').value.trim();
+    const email    = document.getElementById('nc-email').value.trim();
+    const funcao   = document.getElementById('nc-funcao').value.trim();
+    const setor    = document.getElementById('nc-setor').value.trim();
+    const depto    = document.getElementById('nc-depto').value.trim();
+    const papel    = document.getElementById('nc-papel').value;
+    const ferias   = parseInt(document.getElementById('nc-ferias').value) || 30;
+    const folgas   = parseInt(document.getElementById('nc-folgas').value) || 0;
+    const admissao = document.getElementById('nc-admissao').value;
+    const erro     = document.getElementById('nc-erro');
+    const btn      = document.getElementById('nc-btn');
+
+    if (!nome)  { erro.textContent = 'Informe o nome.'; return; }
+    if (!email) { erro.textContent = 'Informe o e-mail.'; return; }
+
+    btn.disabled = true;
+    btn.textContent = 'Cadastrando...';
+
+    try {
+      // Senha provisória aleatória
+      const senha = Math.random().toString(36).slice(-8) + 'A1!';
+
+      // Cria usuário no Firebase Auth
+      const cred = await auth.createUserWithEmailAndPassword(email, senha);
+      const uid = cred.user.uid;
+
+      // Cria perfil no Firestore
+      await db.collection('usuarios').doc(uid).set({
+        uid, nome, email, foto: '',
+        funcao, setor, departamento: depto,
+        papel, saldo_ferias: ferias, saldo_folgas: folgas,
+        banco_horas: 0,
+        admissao: admissao || new Date().toISOString().split('T')[0],
+        criadoEm: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Envia e-mail de redefinição de senha
+      await auth.sendPasswordResetEmail(email);
+
+      document.getElementById('modal-novo-colab').remove();
+      alert(`Colaborador cadastrado! Um e-mail foi enviado para ${email} para definir a senha.`);
+      this.render();
+    } catch(e) {
+      erro.textContent = e.code === 'auth/email-already-in-use'
+        ? 'Este e-mail já está cadastrado.'
+        : 'Erro: ' + e.message;
+      btn.disabled = false;
+      btn.textContent = 'Cadastrar';
+    }
   },
 
   async editarColaborador(uid) {
