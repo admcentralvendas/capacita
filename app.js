@@ -81,13 +81,126 @@ const App = {
             <span class="logo-text">Capacita</span>
           </div>
           <p class="login-sub">Gestão de pessoas para departamentos</p>
-          <input class="inp" type="email" id="inp-email" placeholder="E-mail">
-          <input class="inp" type="password" id="inp-senha" placeholder="Senha" onkeydown="if(event.key==='Enter')App.loginEmail()">
-          <p id="login-erro" style="color:#E24B4A;font-size:13px;margin:4px 0 0;min-height:16px"></p>
-          <button class="btn-primary" onclick="App.loginEmail()">Entrar</button>
+
+          <!-- Abas -->
+          <div class="login-tabs">
+            <button class="login-tab active" id="tab-entrar" onclick="App.switchLoginTab('entrar')">Entrar</button>
+            <button class="login-tab" id="tab-cadastro" onclick="App.switchLoginTab('cadastro')">Primeiro acesso</button>
+          </div>
+
+          <!-- Painel Entrar -->
+          <div id="painel-entrar">
+            <input class="inp" type="email" id="inp-email" placeholder="E-mail" onkeydown="if(event.key==='Enter')App.loginEmail()">
+            <input class="inp" type="password" id="inp-senha" placeholder="Senha" onkeydown="if(event.key==='Enter')App.loginEmail()" style="margin-top:10px">
+            <p id="login-erro" style="color:#E24B4A;font-size:13px;margin:6px 0 0;min-height:16px"></p>
+            <button class="btn-primary" onclick="App.loginEmail()" style="width:100%;justify-content:center;margin-top:4px">Entrar</button>
+            <p style="font-size:12px;color:var(--text-3);text-align:center;margin-top:14px;cursor:pointer" onclick="App.abrirRecuperacao()">
+              Esqueci minha senha
+            </p>
+          </div>
+
+          <!-- Painel Primeiro acesso -->
+          <div id="painel-cadastro" style="display:none">
+            <p style="font-size:13px;color:var(--text-2);margin-bottom:14px">
+              Use o e-mail cadastrado pelo seu gestor para criar sua senha.
+            </p>
+            <input class="inp" type="email" id="cad-email" placeholder="E-mail cadastrado">
+            <input class="inp" type="password" id="cad-senha" placeholder="Criar senha" style="margin-top:10px" onkeydown="if(event.key==='Enter')App.doCadastro()">
+            <input class="inp" type="password" id="cad-confirma" placeholder="Confirmar senha" style="margin-top:10px" onkeydown="if(event.key==='Enter')App.doCadastro()">
+            <p id="cad-erro" style="color:#E24B4A;font-size:13px;margin:6px 0 0;min-height:16px"></p>
+            <button class="btn-primary" onclick="App.doCadastro()" style="width:100%;justify-content:center;margin-top:8px">Criar acesso</button>
+          </div>
         </div>
       </div>
     `;
+  },
+
+  switchLoginTab(tab) {
+    document.getElementById('painel-entrar').style.display  = tab === 'entrar'   ? 'block' : 'none';
+    document.getElementById('painel-cadastro').style.display = tab === 'cadastro' ? 'block' : 'none';
+    document.getElementById('tab-entrar').classList.toggle('active',  tab === 'entrar');
+    document.getElementById('tab-cadastro').classList.toggle('active', tab === 'cadastro');
+  },
+
+  async doCadastro() {
+    const email    = document.getElementById('cad-email').value.trim();
+    const senha    = document.getElementById('cad-senha').value;
+    const confirma = document.getElementById('cad-confirma').value;
+    const erro     = document.getElementById('cad-erro');
+
+    if (!email)            { erro.textContent = 'Informe o e-mail.'; return; }
+    if (senha.length < 6)  { erro.textContent = 'A senha deve ter pelo menos 6 caracteres.'; return; }
+    if (senha !== confirma){ erro.textContent = 'As senhas não coincidem.'; return; }
+
+    erro.textContent = 'Verificando...';
+
+    try {
+      // Verifica se o e-mail foi pré-cadastrado pelo gestor no Firestore
+      const snap = await db.collection('usuarios')
+        .where('email', '==', email.toLowerCase())
+        .where('ativo', '==', false)
+        .get();
+
+      if (snap.empty) {
+        // Tenta também sem o campo ativo (compatibilidade)
+        const snap2 = await db.collection('usuarios')
+          .where('email', '==', email.toLowerCase())
+          .get();
+        if (snap2.empty) {
+          erro.textContent = 'E-mail não encontrado. Solicite o cadastro ao seu gestor.';
+          return;
+        }
+        // Verifica se já tem Auth (já ativado)
+        const perfil = snap2.docs[0].data();
+        if (perfil.uid && perfil.uid !== perfil.email.replace(/[^a-zA-Z0-9]/g,'_')) {
+          erro.textContent = 'Este e-mail já tem acesso ativo. Use a aba "Entrar".';
+          return;
+        }
+      }
+
+      // Perfil encontrado — cria usuário no Firebase Auth
+      const docSnap = snap.empty
+        ? (await db.collection('usuarios').where('email', '==', email.toLowerCase()).get()).docs[0]
+        : snap.docs[0];
+
+      const cred = await auth.createUserWithEmailAndPassword(email, senha);
+      const uid  = cred.user.uid;
+
+      // Atualiza o perfil com o uid real e marca como ativo
+      await db.collection('usuarios').doc(docSnap.id).update({
+        uid,
+        ativo: true,
+        ativadoEm: firebase.firestore.FieldValue.serverTimestamp()
+      });
+
+      // Se o documento estava com id provisório, cria novo com uid correto
+      if (docSnap.id !== uid) {
+        const dadosAtuais = (await db.collection('usuarios').doc(docSnap.id).get()).data();
+        await db.collection('usuarios').doc(uid).set({ ...dadosAtuais, uid });
+        await db.collection('usuarios').doc(docSnap.id).delete();
+      }
+
+      erro.textContent = '';
+      // Auth listener vai chamar renderApp automaticamente
+
+    } catch(e) {
+      if (e.code === 'auth/email-already-in-use') {
+        erro.textContent = 'Este e-mail já tem acesso ativo. Use a aba "Entrar".';
+      } else {
+        erro.textContent = 'Erro: ' + e.message;
+      }
+    }
+  },
+
+  abrirRecuperacao() {
+    auth.sendPasswordResetEmail(document.getElementById('inp-email')?.value || '')
+      .then(() => alert('E-mail de recuperação enviado! Verifique sua caixa de entrada.'))
+      .catch(() => {
+        const email = prompt('Informe seu e-mail para recuperação:');
+        if (email) auth.sendPasswordResetEmail(email)
+          .then(() => alert('E-mail enviado!'))
+          .catch(e => alert('Erro: ' + e.message));
+      });
   },
 
   renderApp() {
@@ -881,33 +994,35 @@ const Equipe = {
     btn.textContent = 'Cadastrando...';
 
     try {
-      // Senha provisória aleatória
-      const senha = Math.random().toString(36).slice(-8) + 'A1!';
+      // Verifica se e-mail já existe
+      const existe = await db.collection('usuarios')
+        .where('email', '==', email.toLowerCase()).get();
+      if (!existe.empty) {
+        erro.textContent = 'Este e-mail já está cadastrado.';
+        btn.disabled = false;
+        btn.textContent = 'Cadastrar';
+        return;
+      }
 
-      // Cria usuário no Firebase Auth
-      const cred = await auth.createUserWithEmailAndPassword(email, senha);
-      const uid = cred.user.uid;
-
-      // Cria perfil no Firestore
-      await db.collection('usuarios').doc(uid).set({
-        uid, nome, email, foto: '',
+      // Salva perfil no Firestore com id provisório baseado no e-mail
+      // NÃO cria no Firebase Auth — colaborador fará isso no primeiro acesso
+      const idProvisorio = email.toLowerCase().replace(/[^a-z0-9]/g, '_');
+      await db.collection('usuarios').doc(idProvisorio).set({
+        uid: idProvisorio,
+        nome, email: email.toLowerCase(), foto: '',
         funcao, setor, departamento: depto,
         papel, saldo_ferias: ferias, saldo_folgas: folgas,
         banco_horas: 0,
+        ativo: false,
         admissao: admissao || new Date().toISOString().split('T')[0],
         criadoEm: firebase.firestore.FieldValue.serverTimestamp()
       });
 
-      // Envia e-mail de redefinição de senha
-      await auth.sendPasswordResetEmail(email);
-
       document.getElementById('modal-novo-colab').remove();
-      alert(`Colaborador cadastrado! Um e-mail foi enviado para ${email} para definir a senha.`);
+      alert(`Colaborador cadastrado! Oriente ${nome} a acessar o Capacita, clicar em "Primeiro acesso" e usar o e-mail ${email} para criar a senha.`);
       this.render();
     } catch(e) {
-      erro.textContent = e.code === 'auth/email-already-in-use'
-        ? 'Este e-mail já está cadastrado.'
-        : 'Erro: ' + e.message;
+      erro.textContent = 'Erro: ' + e.message;
       btn.disabled = false;
       btn.textContent = 'Cadastrar';
     }
