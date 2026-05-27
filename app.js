@@ -42,8 +42,6 @@ const App = {
             setor: '',
             departamento: '',
             papel: 'colaborador',
-            saldo_ferias: 30,
-            saldo_folgas: 0,
             banco_horas: 0,
             admissao: new Date().toISOString().split('T')[0],
             criadoEm: firebase.firestore.FieldValue.serverTimestamp()
@@ -387,7 +385,7 @@ const Calendario = {
       <div class="page-header">
         <div>
           <h1 class="page-title">Calendário</h1>
-          <p class="page-sub">Férias, folgas e atestados${u.setor ? ' · ' + u.setor : ''}</p>
+          <p class="page-sub">Férias, folgas e atestados${u.departamento ? ' · ' + u.departamento : ''}</p>
         </div>
         <button class="btn-primary" onclick="Solicitacoes.openNova()">
           <i class="ti ti-plus"></i> Nova solicitação
@@ -630,12 +628,6 @@ const Solicitacoes = {
       if (!inicio || !fim) { erro.textContent = 'Preencha as datas.'; return; }
       if (fim < inicio)    { erro.textContent = 'A data fim deve ser após a data início.'; return; }
       const dias = App.daysBetween(inicio, fim);
-      if (tipo === 'ferias' && dias > u.saldo_ferias) {
-        erro.textContent = `Saldo insuficiente. Você tem ${u.saldo_ferias} dias de férias.`; return;
-      }
-      if (tipo === 'folga' && dias > u.saldo_folgas) {
-        erro.textContent = `Saldo insuficiente. Você tem ${u.saldo_folgas} dia(s) de folga.`; return;
-      }
       dados = { data_inicio: inicio, data_fim: fim, dias, modo: 'dia_inteiro' };
     } else {
       const data    = document.getElementById('sol-data-hora').value;
@@ -787,19 +779,19 @@ const Aprovacoes = {
     const main = document.getElementById('main-content');
     main.innerHTML = `<div class="page-loading"><i class="ti ti-loader spin"></i> Carregando...</div>`;
 
-    const setor = App.meuSetor();
+    const depto = App.currentUserData.departamento || '';
     const snap = await db.collection('solicitacoes').where('status', '==', 'pendente').get();
 
     const lista = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(s => !setor || s.setor === setor)
+      .filter(s => !depto || s.departamento === depto)
       .sort((a, b) => (a.criadoEm?.seconds || 0) - (b.criadoEm?.seconds || 0));
 
     main.innerHTML = `
       <div class="page-header">
         <div>
           <h1 class="page-title">Aprovações pendentes</h1>
-          <p class="page-sub">${lista.length} solicitação${lista.length !== 1 ? 'ões' : ''} aguardando${setor ? ' · ' + setor : ''}</p>
+          <p class="page-sub">${lista.length} solicitação${lista.length !== 1 ? 'ões' : ''} aguardando${depto ? ' · ' + depto : ''}</p>
         </div>
       </div>
       ${lista.length === 0
@@ -869,17 +861,17 @@ const Equipe = {
     const main = document.getElementById('main-content');
     main.innerHTML = `<div class="page-loading"><i class="ti ti-loader spin"></i> Carregando...</div>`;
 
-    const setor = App.meuSetor();
+    const deptAtual = App.currentUserData.departamento || '';
     const snap = await db.collection('usuarios').get();
     const usuarios = snap.docs
       .map(d => ({ id: d.id, ...d.data() }))
-      .filter(u => !setor || u.setor === setor);
+      .filter(u => !deptAtual || u.departamento === deptAtual);
 
     main.innerHTML = `
       <div class="page-header">
         <div>
           <h1 class="page-title">Equipe</h1>
-          <p class="page-sub">${usuarios.length} colaborador${usuarios.length !== 1 ? 'es' : ''}${setor ? ' · ' + setor : ''}</p>
+          <p class="page-sub">${usuarios.length} colaborador${usuarios.length !== 1 ? 'es' : ''}${deptAtual ? ' · ' + deptAtual : ''}</p>
         </div>
         <button class="btn-primary" onclick="Equipe.openNovoColaborador()">
           <i class="ti ti-user-plus"></i> Novo colaborador
@@ -892,21 +884,23 @@ const Equipe = {
             <p class="equipe-nome">${u.nome}</p>
             <p class="equipe-cargo">${u.funcao || u.papel}</p>
             <p style="font-size:11px;color:#A0A09A;margin:-4px 0 8px">${[u.setor, u.departamento].filter(Boolean).join(' · ') || '—'}</p>
-            <div class="equipe-saldos">
-              <span title="Férias"><i class="ti ti-beach"></i> ${u.saldo_ferias || 0}d</span>
-              <span title="Folgas"><i class="ti ti-sun"></i> ${u.saldo_folgas || 0}d</span>
+            <div style="display:flex;gap:6px;margin-top:8px">
+              <button class="btn-secondary" style="flex:1;font-size:12px"
+                onclick="Equipe.editarColaborador('${u.id}')">
+                <i class="ti ti-edit"></i> Editar
+              </button>
+              <button class="btn-danger" style="font-size:12px;padding:7px 10px"
+                onclick="Equipe.confirmarExclusao('${u.id}', '${u.nome}')" title="Excluir colaborador">
+                <i class="ti ti-trash"></i>
+              </button>
             </div>
-            <button class="btn-secondary" style="width:100%;margin-top:8px;font-size:12px"
-              onclick="Equipe.editarColaborador('${u.id}')">
-              <i class="ti ti-edit"></i> Editar
-            </button>
           </div>`).join('')}
       </div>
     `;
   },
 
   openNovoColaborador() {
-    const setor = App.meuSetor();
+    const depto = App.currentUserData.departamento || '';
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = 'modal-novo-colab';
@@ -918,7 +912,7 @@ const Equipe = {
         </div>
         <div class="modal-body">
           <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">
-            Cadastre o colaborador. Ele receberá um e-mail para criar a senha no primeiro acesso.
+            Oriente o colaborador a acessar o Capacita e clicar em <strong>"Primeiro acesso"</strong> usando o e-mail cadastrado.
           </p>
           <label class="form-label">Nome completo</label>
           <input class="inp" id="nc-nome" placeholder="Nome do colaborador">
@@ -933,12 +927,13 @@ const Equipe = {
             </div>
             <div>
               <label class="form-label">Setor</label>
-              <input class="inp" id="nc-setor" value="${setor}" placeholder="Setor">
+              <input class="inp" id="nc-setor" placeholder="Ex: Vendas">
             </div>
           </div>
 
           <label class="form-label" style="margin-top:12px">Departamento</label>
-          <input class="inp" id="nc-depto" placeholder="Ex: Comercial">
+          <input class="inp" id="nc-depto" value="${depto}" placeholder="Ex: Comercial">
+          <p style="font-size:11px;color:var(--text-3);margin-top:4px">Preenchido com seu departamento. Altere se necessário.</p>
 
           <label class="form-label" style="margin-top:12px">Papel</label>
           <select class="inp" id="nc-papel">
@@ -946,23 +941,9 @@ const Equipe = {
             <option value="gestor">Gestor</option>
           </select>
 
-          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
-            <div>
-              <label class="form-label">Saldo férias (dias)</label>
-              <input class="inp" type="number" id="nc-ferias" value="30">
-            </div>
-            <div>
-              <label class="form-label">Saldo folgas (dias)</label>
-              <input class="inp" type="number" id="nc-folgas" value="0">
-            </div>
-          </div>
-
           <label class="form-label" style="margin-top:12px">Data de admissão</label>
           <input class="inp" type="date" id="nc-admissao">
 
-          <div style="margin-top:14px;padding:12px;background:#F5F4F0;border-radius:8px;font-size:12px;color:#6B6B66">
-            <i class="ti ti-info-circle"></i> Uma senha provisória será gerada. O colaborador poderá alterá-la no primeiro acesso.
-          </div>
           <p id="nc-erro" style="color:#E24B4A;font-size:13px;margin:8px 0 0;min-height:16px"></p>
         </div>
         <div class="modal-footer">
@@ -981,8 +962,6 @@ const Equipe = {
     const setor    = document.getElementById('nc-setor').value.trim();
     const depto    = document.getElementById('nc-depto').value.trim();
     const papel    = document.getElementById('nc-papel').value;
-    const ferias   = parseInt(document.getElementById('nc-ferias').value) || 30;
-    const folgas   = parseInt(document.getElementById('nc-folgas').value) || 0;
     const admissao = document.getElementById('nc-admissao').value;
     const erro     = document.getElementById('nc-erro');
     const btn      = document.getElementById('nc-btn');
@@ -1011,8 +990,7 @@ const Equipe = {
         uid: idProvisorio,
         nome, email: email.toLowerCase(), foto: '',
         funcao, setor, departamento: depto,
-        papel, saldo_ferias: ferias, saldo_folgas: folgas,
-        banco_horas: 0,
+        papel, banco_horas: 0,
         ativo: false,
         admissao: admissao || new Date().toISOString().split('T')[0],
         criadoEm: firebase.firestore.FieldValue.serverTimestamp()
@@ -1064,20 +1042,7 @@ const Equipe = {
             <option value="gestor" ${u.papel === 'gestor' ? 'selected' : ''}>Gestor</option>
           </select>
 
-          <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:12px;margin-top:12px">
-            <div>
-              <label class="form-label">Saldo férias</label>
-              <input class="inp" type="number" id="ed-ferias" value="${u.saldo_ferias || 0}">
-            </div>
-            <div>
-              <label class="form-label">Saldo folgas</label>
-              <input class="inp" type="number" id="ed-folgas" value="${u.saldo_folgas || 0}">
-            </div>
-            <div>
-              <label class="form-label">Banco horas</label>
-              <input class="inp" type="number" id="ed-bh" value="${u.banco_horas || 0}">
-            </div>
-          </div>
+
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="document.getElementById('modal-edit').remove()">Cancelar</button>
@@ -1088,6 +1053,21 @@ const Equipe = {
     document.body.appendChild(overlay);
   },
 
+  confirmarExclusao(id, nome) {
+    if (!confirm(`Excluir o colaborador "${nome}"?\n\nEsta ação remove o perfil permanentemente.`)) return;
+    this.excluirColaborador(id, nome);
+  },
+
+  async excluirColaborador(id, nome) {
+    try {
+      await db.collection('usuarios').doc(id).delete();
+      alert(`Colaborador "${nome}" removido.`);
+      this.render();
+    } catch(e) {
+      alert('Erro ao excluir: ' + e.message);
+    }
+  },
+
   async salvarEdicao(uid) {
     await db.collection('usuarios').doc(uid).update({
       nome:         document.getElementById('ed-nome').value,
@@ -1095,9 +1075,6 @@ const Equipe = {
       setor:        document.getElementById('ed-setor').value,
       departamento: document.getElementById('ed-depto').value,
       papel:        document.getElementById('ed-papel').value,
-      saldo_ferias: parseInt(document.getElementById('ed-ferias').value) || 0,
-      saldo_folgas: parseInt(document.getElementById('ed-folgas').value) || 0,
-      banco_horas:  parseFloat(document.getElementById('ed-bh').value) || 0,
     });
     document.getElementById('modal-edit').remove();
     this.render();
