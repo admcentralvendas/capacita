@@ -379,8 +379,10 @@ const Calendario = {
 
       const evHtml = evs.slice(0,2).map(e => {
         const cls = e.tipo === 'ferias' ? 'ev-ferias' : e.tipo === 'folga' ? 'ev-folga' : 'ev-atestado';
-        const label = isGestor ? (e.nome ? e.nome.split(' ')[0] : App.tipoLabel(e.tipo)) : App.tipoLabel(e.tipo);
-        const title = isGestor ? `${e.nome || '?'} — ${App.tipoLabel(e.tipo)}` : App.tipoLabel(e.tipo);
+        const periodo = e.modo === 'horario' ? `${e.hora_inicio}–${e.hora_fim}` : 'Dia todo';
+        const nomePart = isGestor ? (e.nome ? e.nome.split(' ')[0] : App.tipoLabel(e.tipo)) : App.tipoLabel(e.tipo);
+        const label = `${nomePart} <span class="cal-ev-periodo">${periodo}</span>`;
+        const title = isGestor ? `${e.nome || '?'} — ${App.tipoLabel(e.tipo)} · ${periodo}` : `${App.tipoLabel(e.tipo)} · ${periodo}`;
         return `<div class="cal-ev ${cls}" title="${title}">${label}</div>`;
       }).join('');
       const mais = isLotado ? `<div class="cal-ev-more">+${evs.length - 2} mais</div>` : '';
