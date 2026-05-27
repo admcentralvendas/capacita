@@ -243,7 +243,7 @@ body {
   background: var(--surface);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  min-height: 80px;
+  min-height: 100px;
   padding: 6px;
   cursor: pointer;
   transition: border-color 0.1s;
@@ -898,3 +898,16 @@ textarea.inp { resize: vertical; }
   border-bottom-color: var(--accent);
 }
 .login-tab:hover { color: var(--text); }
+
+/* ─── DIA LOTADO (>2 solicitações) ─── */
+.cal-cell.lotado {
+  background: #FEF2F2;
+  border-color: #FECACA;
+}
+.cal-cell.lotado .cal-day-num {
+  color: #DC2626;
+  font-weight: 700;
+}
+.cal-cell.lotado:hover {
+  border-color: #DC2626;
+}

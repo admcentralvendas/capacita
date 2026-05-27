@@ -357,6 +357,9 @@ const Calendario = {
 
     const u = App.currentUserData;
 
+    // Serializa eventos para passar ao onclick
+    const eventosJSON = JSON.stringify(eventos).replace(/`/g,"'").replace(/\\/g,"\\\\");
+
     let cells = '';
     for (let i = 0; i < primeiroDia; i++) cells += `<div class="cal-cell empty"></div>`;
     for (let dia = 1; dia <= totalDias; dia++) {
@@ -364,18 +367,20 @@ const Calendario = {
       const evs = eventos[key] || [];
       const isHoje = key === new Date().toISOString().split('T')[0];
       const isWeekend = new Date(key + 'T12:00:00').getDay() === 0 || new Date(key + 'T12:00:00').getDay() === 6;
+      const isLotado = evs.length > 2;
+      const temEvento = evs.length > 0;
 
       const evHtml = evs.slice(0,2).map(e => {
         const cls = e.tipo === 'ferias' ? 'ev-ferias' : e.tipo === 'folga' ? 'ev-folga' : 'ev-atestado';
-        // Gestor vê nome, colaborador vê só o tipo
         const label = isGestor ? (e.nome ? e.nome.split(' ')[0] : App.tipoLabel(e.tipo)) : App.tipoLabel(e.tipo);
         const title = isGestor ? `${e.nome || '?'} — ${App.tipoLabel(e.tipo)}` : App.tipoLabel(e.tipo);
         return `<div class="cal-ev ${cls}" title="${title}">${label}</div>`;
       }).join('');
-      const mais = evs.length > 2 ? `<div class="cal-ev-more">+${evs.length - 2}</div>` : '';
+      const mais = isLotado ? `<div class="cal-ev-more">+${evs.length - 2} mais</div>` : '';
 
       cells += `
-        <div class="cal-cell${isHoje ? ' hoje' : ''}${isWeekend ? ' weekend' : ''}">
+        <div class="cal-cell${isHoje ? ' hoje' : ''}${isWeekend ? ' weekend' : ''}${isLotado ? ' lotado' : ''}"
+          ${temEvento ? `onclick="Calendario.openDia('${key}', ${isGestor})" style="cursor:pointer"` : ''}>
           <span class="cal-day-num">${dia}</span>
           ${evHtml}${mais}
         </div>`;
@@ -391,17 +396,7 @@ const Calendario = {
           <i class="ti ti-plus"></i> Nova solicitação
         </button>
       </div>
-      <div class="saldo-cards">
-        <div class="saldo-card">
-          <span class="saldo-label"><i class="ti ti-beach"></i> Saldo férias</span>
-          <span class="saldo-num">${u.saldo_ferias} dias</span>
-        </div>
-        <div class="saldo-card">
-          <span class="saldo-label"><i class="ti ti-sun"></i> Folgas disponíveis</span>
-          <span class="saldo-num">${u.saldo_folgas} dias</span>
-        </div>
 
-      </div>
       <div class="cal-nav">
         <button class="btn-icon" onclick="Calendario.prevMes()"><i class="ti ti-chevron-left"></i></button>
         <h2 class="cal-mes-titulo">${meses[mes]} ${ano}</h2>
@@ -429,6 +424,55 @@ const Calendario = {
     if (App.currentMonth === 11) { App.currentMonth = 0; App.currentYear++; }
     else App.currentMonth++;
     this.render();
+  },
+
+  openDia(key, isGestor) {
+    // Pega solicitações desse dia dos dados já carregados
+    const [ano, mes, dia] = key.split('-');
+    const dataFmt = `${dia}/${mes}/${ano}`;
+
+    // Busca no Firestore direto para garantir dados frescos
+    const fimDia = key + 'T23:59:59';
+    db.collection('solicitacoes')
+      .where('status', '==', 'aprovado')
+      .get()
+      .then(snap => {
+        const dept = App.currentUserData.departamento || '';
+        const evs = snap.docs
+          .map(d => d.data())
+          .filter(s => s.data_inicio <= key && s.data_fim >= key && (!dept || s.departamento === dept));
+
+        if (evs.length === 0) return;
+
+        const overlay = document.createElement('div');
+        overlay.className = 'modal-overlay';
+        overlay.id = 'modal-dia';
+        overlay.innerHTML = `
+          <div class="modal" style="max-width:440px">
+            <div class="modal-header">
+              <h3><i class="ti ti-calendar-event"></i> ${dataFmt}</h3>
+              <button class="btn-icon" onclick="document.getElementById('modal-dia').remove()"><i class="ti ti-x"></i></button>
+            </div>
+            <div class="modal-body">
+              ${evs.map(e => `
+                <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
+                  <div style="width:36px;height:36px;border-radius:50%;background:var(--accent-bg);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600;flex-shrink:0">
+                    ${App.initials(e.nome || '?')}
+                  </div>
+                  <div style="flex:1">
+                    <p style="font-weight:500;font-size:13px">${isGestor ? (e.nome || '—') : App.tipoLabel(e.tipo)}</p>
+                    <p style="font-size:12px;color:var(--text-2)">${isGestor ? App.tipoLabel(e.tipo) + (e.funcao ? ' · ' + e.funcao : '') : ''}</p>
+                    ${e.modo === 'horario' ? `<p style="font-size:11px;color:var(--text-3)">${e.hora_inicio} – ${e.hora_fim}</p>` : ''}
+                  </div>
+                  <span class="tipo-pill tipo-${e.tipo}" style="flex-shrink:0">${App.tipoLabel(e.tipo)}</span>
+                </div>`).join('')}
+            </div>
+            <div class="modal-footer">
+              <button class="btn-primary" onclick="document.getElementById('modal-dia').remove()">Fechar</button>
+            </div>
+          </div>`;
+        document.body.appendChild(overlay);
+      });
   }
 };
 
@@ -500,7 +544,6 @@ const Solicitacoes = {
             <option value="ferias">Férias</option>
             <option value="folga">Folga avulsa</option>
             <option value="atestado">Atestado médico</option>
-            <option value="banco_horas">Compensação banco de horas</option>
           </select>
 
           <label class="form-label" style="margin-top:12px">Período</label>
