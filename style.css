@@ -911,3 +911,30 @@ textarea.inp { resize: vertical; }
 .cal-cell.lotado:hover {
   border-color: #DC2626;
 }
+
+/* ─── DIA BLOQUEADO ─── */
+.cal-cell.bloqueado {
+  background: #FFF7ED;
+  border-color: #FED7AA;
+}
+.cal-cell.bloqueado .cal-day-num {
+  color: #C2410C;
+  font-weight: 700;
+}
+.cal-cell.bloqueado:hover { border-color: #C2410C; }
+
+.cal-ev-bloq {
+  font-size: 10px;
+  font-weight: 600;
+  padding: 2px 5px;
+  border-radius: 4px;
+  background: #FED7AA;
+  color: #9A3412;
+  margin-bottom: 2px;
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}

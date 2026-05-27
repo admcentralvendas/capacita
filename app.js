@@ -228,6 +228,9 @@ const App = {
             </a>
             <a class="nav-item" onclick="App.showPage('equipe')" data-page="equipe">
               <i class="ti ti-users"></i> Equipe
+            </a>
+            <a class="nav-item" onclick="App.showPage('bloqueios')" data-page="bloqueios">
+              <i class="ti ti-lock"></i> Dias bloqueados
             </a>` : ''}
           </nav>
           <div class="sidebar-user">
@@ -257,6 +260,7 @@ const App = {
       case 'aprovacoes':   Aprovacoes.render(); break;
       case 'equipe':       Equipe.render(); break;
       case 'desenvolvimento': Desenvolvimento.render(); break;
+      case 'bloqueios':       Bloqueios.render(); break;
     }
   },
 
@@ -332,7 +336,7 @@ const Calendario = {
     this.renderCalendario(solicitacoes, isGestor);
   },
 
-  renderCalendario(solicitacoes, isGestor) {
+  renderCalendario(solicitacoes, isGestor, bloqueados = {}) {
     const main = document.getElementById('main-content');
     const meses = ['Janeiro','Fevereiro','Março','Abril','Maio','Junho',
                    'Julho','Agosto','Setembro','Outubro','Novembro','Dezembro'];
@@ -370,6 +374,9 @@ const Calendario = {
       const isLotado = evs.length > 2;
       const temEvento = evs.length > 0;
 
+      const isBloqueado = !!bloqueados[key];
+      const motivoBloq  = bloqueados[key] || '';
+
       const evHtml = evs.slice(0,2).map(e => {
         const cls = e.tipo === 'ferias' ? 'ev-ferias' : e.tipo === 'folga' ? 'ev-folga' : 'ev-atestado';
         const label = isGestor ? (e.nome ? e.nome.split(' ')[0] : App.tipoLabel(e.tipo)) : App.tipoLabel(e.tipo);
@@ -377,12 +384,19 @@ const Calendario = {
         return `<div class="cal-ev ${cls}" title="${title}">${label}</div>`;
       }).join('');
       const mais = isLotado ? `<div class="cal-ev-more">+${evs.length - 2} mais</div>` : '';
+      const bloqTag = isBloqueado ? `<div class="cal-ev-bloq" title="${motivoBloq}"><i class="ti ti-lock"></i> ${motivoBloq}</div>` : '';
+
+      const clickAttr = isBloqueado
+        ? `onclick="Calendario.openDiaBloqueado('${key}','${motivoBloq.replace(/'/g,'\'')}')" style="cursor:pointer"`
+        : temEvento
+          ? `onclick="Calendario.openDia('${key}', ${isGestor})" style="cursor:pointer"`
+          : '';
 
       cells += `
-        <div class="cal-cell${isHoje ? ' hoje' : ''}${isWeekend ? ' weekend' : ''}${isLotado ? ' lotado' : ''}"
-          ${temEvento ? `onclick="Calendario.openDia('${key}', ${isGestor})" style="cursor:pointer"` : ''}>
+        <div class="cal-cell${isHoje ? ' hoje' : ''}${isWeekend ? ' weekend' : ''}${isLotado ? ' lotado' : ''}${isBloqueado ? ' bloqueado' : ''}"
+          ${clickAttr}>
           <span class="cal-day-num">${dia}</span>
-          ${evHtml}${mais}
+          ${bloqTag}${evHtml}${mais}
         </div>`;
     }
 
@@ -424,6 +438,11 @@ const Calendario = {
     if (App.currentMonth === 11) { App.currentMonth = 0; App.currentYear++; }
     else App.currentMonth++;
     this.render();
+  },
+
+  openDiaBloqueado(key, motivo) {
+    const [ano, mes, dia] = key.split('-');
+    alert(`📅 ${dia}/${mes}/${ano}\n\n🔒 Dia bloqueado\n${motivo}`);
   },
 
   openDia(key, isGestor) {
@@ -683,6 +702,25 @@ const Solicitacoes = {
       if (totalMin <= 0) { erro.textContent = 'Hora fim deve ser após a hora início.'; return; }
       const horas = +(totalMin / 60).toFixed(2);
       dados = { data_inicio: data, data_fim: data, dias: 0, horas, hora_inicio: horaIni, hora_fim: horaFim, modo: 'horario' };
+    }
+
+    // Verifica se alguma data está bloqueada
+    const dept = App.currentUserData.departamento || '';
+    const bloqSnap2 = await db.collection('dias_bloqueados').get();
+    const diasBloq = bloqSnap2.docs.map(d => d.data()).filter(b => !dept || b.departamento === dept);
+    if (isDia) {
+      let dataCheck = new Date(document.getElementById('sol-inicio').value + 'T12:00:00');
+      const dataFimCheck = new Date(document.getElementById('sol-fim').value + 'T12:00:00');
+      while (dataCheck <= dataFimCheck) {
+        const k = dataCheck.toISOString().split('T')[0];
+        const bloq = diasBloq.find(b => b.data === k);
+        if (bloq) { erro.textContent = `O dia ${App.formatDate(k)} está bloqueado: ${bloq.motivo}`; return; }
+        dataCheck.setDate(dataCheck.getDate() + 1);
+      }
+    } else {
+      const k2 = document.getElementById('sol-data-hora').value;
+      const bloq2 = diasBloq.find(b => b.data === k2);
+      if (bloq2) { erro.textContent = `O dia ${App.formatDate(k2)} está bloqueado: ${bloq2.motivo}`; return; }
     }
 
     erro.textContent = '';
@@ -2211,5 +2249,146 @@ const Desenvolvimento = {
       const d = ts.toDate ? ts.toDate() : new Date(ts.seconds * 1000);
       return d.toLocaleDateString('pt-BR');
     } catch { return ''; }
+  }
+};
+
+// =============================================
+//  MÓDULO — DIAS BLOQUEADOS
+// =============================================
+
+const Bloqueios = {
+  async render() {
+    const main = document.getElementById('main-content');
+    main.innerHTML = `<div class="page-loading"><i class="ti ti-loader spin"></i> Carregando...</div>`;
+
+    const dept = App.currentUserData.departamento || '';
+    const snap = await db.collection('dias_bloqueados').get();
+    const lista = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(b => !dept || b.departamento === dept)
+      .sort((a, b) => a.data.localeCompare(b.data));
+
+    // Separa passados e futuros
+    const hoje = new Date().toISOString().split('T')[0];
+    const futuros  = lista.filter(b => b.data >= hoje);
+    const passados = lista.filter(b => b.data <  hoje);
+
+    main.innerHTML = `
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Dias bloqueados</h1>
+          <p class="page-sub">Datas em que ninguém pode solicitar ausência${dept ? ' · ' + dept : ''}</p>
+        </div>
+        <button class="btn-primary" onclick="Bloqueios.openNovo()">
+          <i class="ti ti-lock"></i> Bloquear dia
+        </button>
+      </div>
+
+      ${futuros.length === 0 && passados.length === 0 ? `
+        <div class="empty-state">
+          <i class="ti ti-lock-open" style="font-size:48px;color:var(--text-3)"></i>
+          <p>Nenhum dia bloqueado ainda</p>
+        </div>` : ''}
+
+      ${futuros.length > 0 ? `
+        <p class="dev-section-title" style="margin-bottom:12px"><i class="ti ti-calendar-event"></i> Próximos bloqueios</p>
+        <div class="table-wrap" style="margin-bottom:28px">
+          <table class="table">
+            <thead><tr><th>Data</th><th>Motivo</th><th>Criado por</th><th></th></tr></thead>
+            <tbody>
+              ${futuros.map(b => `
+                <tr>
+                  <td><strong>${App.formatDate(b.data)}</strong></td>
+                  <td>${b.motivo || '—'}</td>
+                  <td style="font-size:12px;color:var(--text-2)">${b.criado_por_nome || '—'}</td>
+                  <td style="text-align:right">
+                    <button class="btn-danger" style="font-size:12px;padding:5px 10px" onclick="Bloqueios.excluir('${b.id}', '${App.formatDate(b.data)}')">
+                      <i class="ti ti-trash"></i> Remover
+                    </button>
+                  </td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>` : ''}
+
+      ${passados.length > 0 ? `
+        <p class="dev-section-title" style="margin-bottom:12px;color:var(--text-3)"><i class="ti ti-history"></i> Histórico</p>
+        <div class="table-wrap">
+          <table class="table">
+            <thead><tr><th>Data</th><th>Motivo</th></tr></thead>
+            <tbody>
+              ${passados.map(b => `
+                <tr style="opacity:0.6">
+                  <td>${App.formatDate(b.data)}</td>
+                  <td>${b.motivo || '—'}</td>
+                </tr>`).join('')}
+            </tbody>
+          </table>
+        </div>` : ''}
+    `;
+  },
+
+  openNovo() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'modal-bloq';
+    overlay.innerHTML = `
+      <div class="modal">
+        <div class="modal-header">
+          <h3>Bloquear dia</h3>
+          <button class="btn-icon" onclick="document.getElementById('modal-bloq').remove()"><i class="ti ti-x"></i></button>
+        </div>
+        <div class="modal-body">
+          <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">
+            Nenhum colaborador do departamento poderá abrir solicitação para este dia.
+          </p>
+          <label class="form-label">Data</label>
+          <input class="inp" type="date" id="bloq-data">
+          <label class="form-label" style="margin-top:12px">Motivo</label>
+          <input class="inp" id="bloq-motivo" placeholder="Ex: Treinamento obrigatório, Pico de demanda...">
+          <p id="bloq-erro" style="color:#E24B4A;font-size:13px;margin:8px 0 0;min-height:16px"></p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="document.getElementById('modal-bloq').remove()">Cancelar</button>
+          <button class="btn-primary" onclick="Bloqueios.salvar()"><i class="ti ti-lock"></i> Bloquear</button>
+        </div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+  },
+
+  async salvar() {
+    const data   = document.getElementById('bloq-data').value;
+    const motivo = document.getElementById('bloq-motivo').value.trim();
+    const erro   = document.getElementById('bloq-erro');
+
+    if (!data)   { erro.textContent = 'Selecione uma data.'; return; }
+    if (!motivo) { erro.textContent = 'Informe o motivo.'; return; }
+
+    const dept = App.currentUserData.departamento || '';
+
+    // Verifica se já existe bloqueio nessa data
+    const existe = await db.collection('dias_bloqueados')
+      .where('data', '==', data)
+      .where('departamento', '==', dept)
+      .get();
+    if (!existe.empty) { erro.textContent = 'Este dia já está bloqueado.'; return; }
+
+    await db.collection('dias_bloqueados').add({
+      data, motivo,
+      departamento: dept,
+      criado_por: App.currentUser.uid,
+      criado_por_nome: App.currentUserData.nome,
+      criadoEm: firebase.firestore.FieldValue.serverTimestamp()
+    });
+
+    document.getElementById('modal-bloq').remove();
+    this.render();
+  },
+
+  async excluir(id, dataFmt) {
+    if (!confirm(`Remover o bloqueio do dia ${dataFmt}?`)) return;
+    await db.collection('dias_bloqueados').doc(id).delete();
+    this.render();
   }
 };
