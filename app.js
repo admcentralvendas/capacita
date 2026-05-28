@@ -1167,8 +1167,10 @@ const Equipe = {
 // =============================================
 
 // =============================================
+
+// =============================================
 //  MÓDULO — DESENVOLVIMENTO
-//  Ciclos, 360°, Feedbacks, PDI
+//  Ciclos individuais, Feedbacks, PDI
 // =============================================
 
 const Desenvolvimento = {
@@ -1182,45 +1184,152 @@ const Desenvolvimento = {
     const uid = App.currentUser.uid;
     const isGestor = App.currentUserData.papel === 'gestor' || App.currentUserData.papel === 'admin';
     const setor = App.currentUserData.setor || '';
+    const dept  = App.currentUserData.departamento || '';
 
-    // Ciclos do setor
-    const ciclosSnap = await db.collection('ciclos').where('setor', '==', setor).get();
-    const todosCiclos = ciclosSnap.docs.map(d => ({ id: d.id, ...d.data() }));
-    const ciclosAtivos = todosCiclos.filter(c => c.status !== 'encerrado');
+    if (isGestor) {
+      await this.renderGestor(uid, setor, dept);
+    } else {
+      await this.renderColaborador(uid);
+    }
+  },
 
-    // Avaliações 360 pendentes para MIM
+  // ─── VISÃO DO GESTOR ────────────────────────
+
+  async renderGestor(uid, setor, dept) {
+    const main = document.getElementById('main-content');
+
+    const snap = await db.collection('ciclos').where('criado_por', '==', uid).get();
+    const todos = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
+
+    const ativos    = todos.filter(c => c.status !== 'encerrado');
+    const encerrados = todos.filter(c => c.status === 'encerrado');
+
+    main.innerHTML = `
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">Desenvolvimento</h1>
+          <p class="page-sub">Ciclos de avaliação individual da equipe</p>
+        </div>
+        <div style="display:flex;gap:8px">
+          <button class="btn-secondary" onclick="Desenvolvimento.openFeedback()">
+            <i class="ti ti-message-circle"></i> Dar feedback
+          </button>
+          <button class="btn-primary" onclick="Desenvolvimento.openNovoCiclo()">
+            <i class="ti ti-plus"></i> Novo ciclo
+          </button>
+        </div>
+      </div>
+
+      <!-- Busca -->
+      <div style="position:relative;margin-bottom:20px">
+        <i class="ti ti-search" style="position:absolute;left:12px;top:50%;transform:translateY(-50%);color:var(--text-3)"></i>
+        <input class="inp" id="busca-ciclos" placeholder="Buscar por colaborador ou período..."
+          style="padding-left:36px" oninput="Desenvolvimento.filtrarCiclos()">
+      </div>
+
+      <!-- Ciclos ativos -->
+      <div id="secao-ativos">
+        <p class="dev-section-title"><i class="ti ti-refresh"></i> Ciclos ativos <span class="fb-count">${ativos.length}</span></p>
+        <div id="lista-ativos">
+          ${ativos.length === 0
+            ? `<p class="dev-empty">Nenhum ciclo ativo — crie um novo ciclo para um colaborador</p>`
+            : ativos.map(c => this.renderCicloCardGestor(c)).join('')}
+        </div>
+      </div>
+
+      <!-- Ciclos encerrados -->
+      ${encerrados.length > 0 ? `
+      <div id="secao-encerrados" style="margin-top:28px">
+        <p class="dev-section-title" style="color:var(--text-3)"><i class="ti ti-history"></i> Ciclos encerrados <span style="font-size:12px;font-weight:400">(${encerrados.length})</span></p>
+        <div id="lista-encerrados">
+          ${encerrados.map(c => this.renderCicloCardGestor(c, true)).join('')}
+        </div>
+      </div>` : ''}
+    `;
+
+    // Guarda todos para filtragem
+    window._ciclosGestor = todos;
+  },
+
+  renderCicloCardGestor(ciclo, encerrado = false) {
+    const etapaLabel = {
+      auto: 'Aguardando autoavaliação',
+      '360': 'Avaliação 360° em andamento',
+      gestor: 'Aguardando avaliação do gestor',
+      resultado: 'Resultado disponível',
+      encerrado: 'Encerrado'
+    };
+    const etapa = ciclo.status === 'encerrado' ? 'encerrado' : (ciclo.etapa_atual || 'auto');
+    const media = ciclo.media_final;
+
+    return `
+      <div class="ciclo-card ${encerrado ? 'ciclo-encerrado' : ''}" data-nome="${(ciclo.colaborador_nome || '').toLowerCase()}" data-periodo="${(ciclo.periodo || '').toLowerCase()}">
+        <div class="ciclo-header">
+          <div style="display:flex;align-items:center;gap:10px">
+            <div class="equipe-avatar" style="width:38px;height:38px;font-size:13px">${App.initials(ciclo.colaborador_nome || '?')}</div>
+            <div>
+              <p class="ciclo-nome">${ciclo.colaborador_nome || '—'}</p>
+              <p class="ciclo-periodo">${ciclo.nome} ${ciclo.periodo ? '· ' + ciclo.periodo : ''}</p>
+            </div>
+          </div>
+          <div style="display:flex;gap:6px;align-items:center">
+            ${media != null ? `<span style="font-size:13px;font-weight:700;color:var(--accent)">${media.toFixed(1)}</span>` : ''}
+            <span class="badge ${ciclo.status === 'encerrado' ? 'badge-default' : ciclo.status === 'em_andamento' ? 'badge-warning' : 'badge-success'}">
+              ${ciclo.status === 'encerrado' ? 'Encerrado' : ciclo.status === 'em_andamento' ? 'Em andamento' : 'Aberto'}
+            </span>
+          </div>
+        </div>
+        <p style="font-size:12px;color:var(--text-2);margin-bottom:12px">
+          <i class="ti ti-point"></i> ${etapaLabel[etapa] || etapa}
+        </p>
+        <div class="ciclo-actions">
+          <button class="btn-primary" style="font-size:12px;padding:6px 12px"
+            onclick="Desenvolvimento.abrirPainelCiclo('${ciclo.id}')">
+            <i class="ti ti-layout-dashboard"></i> Abrir ciclo
+          </button>
+          ${ciclo.status !== 'encerrado' ? `
+          <button class="btn-secondary" style="font-size:12px;padding:6px 12px"
+            onclick="Desenvolvimento.encerrarCiclo('${ciclo.id}', '${(ciclo.colaborador_nome||'').replace(/'/g,"\\'")}')">
+            <i class="ti ti-lock"></i> Encerrar
+          </button>` : ''}
+        </div>
+      </div>`;
+  },
+
+  filtrarCiclos() {
+    const q = document.getElementById('busca-ciclos')?.value.toLowerCase() || '';
+    document.querySelectorAll('.ciclo-card').forEach(card => {
+      const nome    = card.dataset.nome || '';
+      const periodo = card.dataset.periodo || '';
+      card.style.display = (!q || nome.includes(q) || periodo.includes(q)) ? '' : 'none';
+    });
+  },
+
+  // ─── VISÃO DO COLABORADOR ────────────────────
+
+  async renderColaborador(uid) {
+    const main = document.getElementById('main-content');
+
+    // Ciclos onde este colaborador é o avaliado
+    const snap = await db.collection('ciclos').where('colaborador_uid', '==', uid).get();
+    const todos = snap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
+
+    const ativo      = todos.find(c => c.status !== 'encerrado');
+    const encerrados = todos.filter(c => c.status === 'encerrado');
+
+    // Avaliações 360 pendentes para mim
     const pendSnap = await db.collection('avaliacoes_360')
-      .where('avaliador_uid', '==', uid)
-      .where('status', '==', 'pendente')
-      .get();
+      .where('avaliador_uid', '==', uid).where('status', '==', 'pendente').get();
     const pendentes360 = pendSnap.docs.map(d => ({ id: d.id, ...d.data() }));
 
-    // Feedbacks recebidos (colaborador vê os próprios; gestor vê os da equipe)
-    let feedbacks = [];
-    if (isGestor) {
-      // Busca uids da equipe
-      const equipSnap = await db.collection('usuarios').get();
-      const equipUids = equipSnap.docs
-        .map(d => d.data())
-        .filter(u => !setor || u.setor === setor)
-        .map(u => u.uid);
-      // Firestore não suporta where-in com mais de 10; busca todos e filtra
-      const fbAll = await db.collection('feedbacks').get();
-      feedbacks = fbAll.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(f => equipUids.includes(f.destinatario_uid))
-        .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
-      // Enriquece com nome do destinatário
-      const nomeMap = {};
-      equipSnap.docs.forEach(d => { nomeMap[d.data().uid] = d.data().nome; });
-      feedbacks = feedbacks.map(f => ({ ...f, destinatario_nome: nomeMap[f.destinatario_uid] || '?' }));
-    } else {
-      const fbSnap = await db.collection('feedbacks').where('destinatario_uid', '==', uid).get();
-      feedbacks = fbSnap.docs.map(d => ({ id: d.id, ...d.data() }))
-        .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
-    }
+    // Feedbacks recebidos
+    const fbSnap = await db.collection('feedbacks').where('destinatario_uid', '==', uid).get();
+    const feedbacks = fbSnap.docs.map(d => ({ id: d.id, ...d.data() }))
+      .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
 
-    // PDIs do usuário
+    // PDIs do colaborador
     const pdiSnap = await db.collection('pdis').where('uid', '==', uid).get();
     const pdis = pdiSnap.docs.map(d => ({ id: d.id, ...d.data() }))
       .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0));
@@ -1228,18 +1337,12 @@ const Desenvolvimento = {
     main.innerHTML = `
       <div class="page-header">
         <div>
-          <h1 class="page-title">Desenvolvimento</h1>
-          <p class="page-sub">Ciclos de avaliação, feedbacks e PDI${setor ? ' · ' + setor : ''}</p>
+          <h1 class="page-title">Meu desenvolvimento</h1>
+          <p class="page-sub">Ciclos de avaliação, feedbacks e PDI</p>
         </div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <button class="btn-secondary" onclick="Desenvolvimento.openFeedback()">
-            <i class="ti ti-message-circle"></i> Dar feedback
-          </button>
-          ${isGestor ? `
-          <button class="btn-primary" onclick="Desenvolvimento.openNovoCiclo()">
-            <i class="ti ti-plus"></i> Novo ciclo
-          </button>` : ''}
-        </div>
+        <button class="btn-secondary" onclick="Desenvolvimento.openFeedback()">
+          <i class="ti ti-message-circle"></i> Dar feedback
+        </button>
       </div>
 
       ${pendentes360.length > 0 ? `
@@ -1249,31 +1352,74 @@ const Desenvolvimento = {
         <button class="btn-primary" style="margin-left:auto" onclick="Desenvolvimento.openPendentes360()">Responder</button>
       </div>` : ''}
 
-      <!-- CICLOS -->
+      <!-- CICLO ATIVO -->
       <div class="dev-section">
-        <h2 class="dev-section-title"><i class="ti ti-refresh"></i> Ciclos de avaliação</h2>
-        ${ciclosAtivos.length === 0
-          ? `<p class="dev-empty">Nenhum ciclo ativo${isGestor ? ' — crie um novo ciclo para sua equipe' : ''}</p>`
-          : ciclosAtivos.map(c => Desenvolvimento.renderCicloCard(c, isGestor, uid)).join('')}
+        <h2 class="dev-section-title"><i class="ti ti-refresh"></i> Ciclo ativo</h2>
+        ${!ativo
+          ? `<p class="dev-empty">Nenhum ciclo ativo no momento</p>`
+          : `<div class="ciclo-card">
+              <div class="ciclo-header">
+                <div>
+                  <p class="ciclo-nome">${ativo.nome}</p>
+                  <p class="ciclo-periodo">${ativo.periodo || ''}</p>
+                </div>
+                <span class="badge badge-success">Ativo</span>
+              </div>
+              ${this.renderEtapasColab(ativo, uid)}
+              <div class="ciclo-actions">
+                ${ativo.etapa_atual === 'auto' && !ativo.avaliacoes?.[uid + '_auto']
+                  ? `<button class="btn-primary" onclick="Desenvolvimento.openAutoavaliacao('${ativo.id}')">
+                      <i class="ti ti-pencil"></i> Fazer autoavaliação
+                     </button>`
+                  : ativo.etapa_atual === 'auto' && ativo.avaliacoes?.[uid + '_auto']
+                    ? `<span style="color:var(--success);font-size:13px"><i class="ti ti-check"></i> Autoavaliação concluída — aguardando próxima etapa</span>`
+                    : ''
+                }
+                ${ativo.resultados_liberados?.[uid]
+                  ? `<button class="btn-secondary" onclick="Desenvolvimento.verMeuResultado('${ativo.id}')">
+                      <i class="ti ti-chart-bar"></i> Ver meu resultado
+                     </button>`
+                  : ''
+                }
+              </div>
+            </div>`
+        }
       </div>
+
+      <!-- CICLOS ENCERRADOS -->
+      ${encerrados.length > 0 ? `
+      <div class="dev-section">
+        <h2 class="dev-section-title" style="color:var(--text-3)"><i class="ti ti-history"></i> Ciclos encerrados</h2>
+        ${encerrados.map(c => `
+          <div class="ciclo-card ciclo-encerrado">
+            <div class="ciclo-header">
+              <div>
+                <p class="ciclo-nome">${c.nome}</p>
+                <p class="ciclo-periodo">${c.periodo || ''}</p>
+              </div>
+              <div style="display:flex;align-items:center;gap:8px">
+                ${c.media_final != null ? `<span style="font-size:16px;font-weight:700;color:var(--accent)">${c.media_final.toFixed(1)}</span>` : ''}
+                <span class="badge badge-default">Encerrado</span>
+              </div>
+            </div>
+            ${c.resultados_liberados?.[c.colaborador_uid]
+              ? `<button class="btn-secondary" style="font-size:12px" onclick="Desenvolvimento.verMeuResultado('${c.id}')">
+                  <i class="ti ti-chart-bar"></i> Ver resultado
+                 </button>`
+              : `<p style="font-size:12px;color:var(--text-3)">Resultado não liberado</p>`
+            }
+          </div>`).join('')}
+      </div>` : ''}
 
       <!-- FEEDBACKS -->
       <div class="dev-section">
-        <h2 class="dev-section-title">
-          <i class="ti ti-messages"></i>
-          ${isGestor ? 'Feedbacks da equipe' : 'Feedbacks recebidos'}
-          ${feedbacks.length > 0 ? `<span class="fb-count">${feedbacks.length}</span>` : ''}
-          ${isGestor && feedbacks.length > 5 ? `<button class="btn-icon" style="margin-left:auto;font-size:12px" onclick="Desenvolvimento.verTodosFeedbacks()"><i class="ti ti-eye"></i> Ver todos</button>` : ''}
-        </h2>
+        <h2 class="dev-section-title"><i class="ti ti-messages"></i> Feedbacks recebidos</h2>
         ${feedbacks.length === 0
-          ? `<p class="dev-empty">${isGestor ? 'Nenhum feedback registrado na equipe ainda' : 'Nenhum feedback recebido ainda'}</p>`
-          : feedbacks.slice(0, isGestor ? 10 : 5).map(f => `
+          ? `<p class="dev-empty">Nenhum feedback recebido ainda</p>`
+          : feedbacks.slice(0,5).map(f => `
             <div class="feedback-card">
               <div class="feedback-header">
-                <div style="display:flex;align-items:center;gap:8px">
-                  ${isGestor ? `<span class="feedback-destinatario">${f.destinatario_nome}</span><span style="color:var(--text-3)">·</span>` : ''}
-                  <span class="feedback-tipo">${f.tipo === 'positivo' ? '👍 Positivo' : f.tipo === 'melhoria' ? '💡 Melhoria' : '💬 Geral'}</span>
-                </div>
+                <span class="feedback-tipo">${f.tipo === 'positivo' ? '👍 Positivo' : f.tipo === 'melhoria' ? '💡 Melhoria' : '💬 Geral'}</span>
                 <span class="feedback-data">${Desenvolvimento.fmtTs(f.criadoEm)}</span>
               </div>
               <p class="feedback-texto">${f.mensagem}</p>
@@ -1307,92 +1453,36 @@ const Desenvolvimento = {
     `;
   },
 
-  // ─── CARD DO CICLO ──────────────────────────
-
-  renderCicloCard(ciclo, isGestor, uid) {
-    const config360 = ciclo.config_360 || {};
-    const meusPares = config360[uid] || [];
-    const etapaAtual = ciclo.etapa_atual || 'autoavaliacao';
-    const autoFeita = !!(ciclo.avaliacoes?.[uid + '_auto']);
-    const jaAvalieiGestor = isGestor && !!(ciclo.avaliacoes_gestor?.[uid]);
-
-    // Progresso geral do ciclo
-    const totalColab = Object.keys(config360).length;
-    const conclGestor = Object.keys(ciclo.avaliacoes_gestor || {}).length;
-
+  renderEtapasColab(ciclo, uid) {
+    const etapas = [
+      { key: 'auto', label: 'Autoavaliação' },
+      { key: '360',  label: 'Avaliação 360°' },
+      { key: 'gestor', label: 'Avaliação do gestor' },
+      { key: 'resultado', label: 'Resultado' }
+    ];
+    const atual = ciclo.etapa_atual || 'auto';
     return `
-      <div class="ciclo-card">
-        <div class="ciclo-header">
-          <div>
-            <p class="ciclo-nome">${ciclo.nome}</p>
-            <p class="ciclo-periodo">${ciclo.periodo || ''}</p>
-          </div>
-          <div style="display:flex;gap:8px;align-items:center">
-            <span class="badge ${ciclo.status === 'aberto' ? 'badge-success' : ciclo.status === 'em_andamento' ? 'badge-warning' : 'badge-default'}">
-              ${ciclo.status === 'aberto' ? 'Aberto' : ciclo.status === 'em_andamento' ? 'Em andamento' : ciclo.status}
-            </span>
-            ${isGestor ? `<button class="btn-icon" onclick="Desenvolvimento.verPainelCiclo('${ciclo.id}')" title="Painel do ciclo"><i class="ti ti-layout-dashboard"></i></button>` : ''}
-          </div>
-        </div>
-
-        <!-- Etapas visuais -->
-        <div class="ciclo-etapas">
-          ${[
-            { key: 'auto', label: 'Autoavaliação' },
-            { key: '360', label: 'Avaliação 360°' },
-            { key: 'gestor', label: 'Avaliação do gestor' },
-            { key: 'resultado', label: 'Resultado' }
-          ].map((e, i) => {
-            const concluida = ciclo.etapas_concluidas?.includes(e.key);
-            const ativa = etapaAtual === e.key;
-            return `<div class="etapa-item ${ativa ? 'ativa' : ''} ${concluida ? 'concluida' : ''}">
-              <div class="etapa-dot">${concluida ? '✓' : i + 1}</div>
-              <span>${e.label}</span>
-            </div>`;
-          }).join('<div class="etapa-linha"></div>')}
-        </div>
-
-        <!-- Ações do colaborador -->
-        ${!isGestor ? `
-          <div class="ciclo-actions">
-            ${!autoFeita && etapaAtual === 'auto'
-              ? `<button class="btn-primary" onclick="Desenvolvimento.openAutoavaliacao('${ciclo.id}')">
-                  <i class="ti ti-pencil"></i> Fazer autoavaliação
-                 </button>`
-              : autoFeita
-                ? `<span style="font-size:13px;color:var(--success)"><i class="ti ti-check"></i> Autoavaliação concluída</span>`
-                : ''
-            }
-            ${ciclo.resultados_liberados?.[uid]
-              ? `<button class="btn-secondary" onclick="Desenvolvimento.verMeuResultado('${ciclo.id}')">
-                  <i class="ti ti-chart-bar"></i> Ver meu resultado
-                 </button>`
-              : ''
-            }
-          </div>` : ''}
-
-        <!-- Ações do gestor -->
-        ${isGestor ? `
-          <div class="ciclo-actions">
-            ${ciclo.status === 'aberto'
-              ? `<button class="btn-secondary" onclick="Desenvolvimento.openConfigurar360('${ciclo.id}')">
-                  <i class="ti ti-settings"></i> Configurar avaliadores
-                 </button>`
-              : ''
-            }
-            ${totalColab > 0
-              ? `<span style="font-size:12px;color:var(--text-2)">
-                  ${conclGestor}/${totalColab} avaliações do gestor concluídas
-                 </span>`
-              : ''
-            }
-          </div>` : ''}
+      <div class="ciclo-etapas" style="margin-bottom:12px">
+        ${etapas.map((e, i) => {
+          const concluida = ciclo.etapas_concluidas?.includes(e.key);
+          const ativa = atual === e.key;
+          return `<div class="etapa-item ${ativa ? 'ativa' : ''} ${concluida ? 'concluida' : ''}">
+            <div class="etapa-dot">${concluida ? '✓' : i + 1}</div>
+            <span>${e.label}</span>
+          </div>`;
+        }).join('<div class="etapa-linha"></div>')}
       </div>`;
   },
 
   // ─── NOVO CICLO ─────────────────────────────
 
-  openNovoCiclo() {
+  async openNovoCiclo() {
+    const setor = App.currentUserData.setor || '';
+    const dept  = App.currentUserData.departamento || '';
+    const snap  = await db.collection('usuarios').get();
+    const equipe = snap.docs.map(d => d.data())
+      .filter(u => u.uid !== App.currentUser.uid && (!dept || u.departamento === dept));
+
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = 'modal-ciclo';
@@ -1403,16 +1493,20 @@ const Desenvolvimento = {
           <button class="btn-icon" onclick="document.getElementById('modal-ciclo').remove()"><i class="ti ti-x"></i></button>
         </div>
         <div class="modal-body">
-          <label class="form-label">Nome do ciclo</label>
-          <input class="inp" id="ciclo-nome" placeholder="Ex: 1º Semestre 2025">
+          <label class="form-label">Colaborador <span style="color:#E24B4A">*</span></label>
+          <select class="inp" id="ciclo-colab">
+            <option value="">Selecione o colaborador...</option>
+            ${equipe.map(u => `<option value="${u.uid}" data-nome="${u.nome}">${u.nome}${u.funcao ? ' · ' + u.funcao : ''}</option>`).join('')}
+          </select>
+
+          <label class="form-label" style="margin-top:12px">Nome do ciclo <span style="color:#E24B4A">*</span></label>
+          <input class="inp" id="ciclo-nome" placeholder="Ex: Avaliação Semestral">
+
           <label class="form-label" style="margin-top:12px">Período</label>
-          <input class="inp" id="ciclo-periodo" placeholder="Ex: Jan–Jun 2025">
+          <input class="inp" id="ciclo-periodo" placeholder="Ex: 1º Semestre 2025">
+
           <div style="margin-top:14px;padding:12px;background:#F5F4F0;border-radius:8px;font-size:13px;color:#6B6B66">
-            <strong>Fluxo do ciclo:</strong><br>
-            1. Colaborador faz autoavaliação<br>
-            2. Pares selecionados avaliam anonimamente (3–5 por colaborador)<br>
-            3. Quando todos os pares respondem → gestor avalia aquele colaborador<br>
-            4. Gestor conclui → resultado liberado com feedback e PDI
+            <strong>Fluxo:</strong> Autoavaliação → Avaliação 360° pelos pares → Avaliação do gestor → Resultado
           </div>
           <p id="ciclo-erro" style="color:#E24B4A;font-size:13px;margin:8px 0 0;min-height:16px"></p>
         </div>
@@ -1425,15 +1519,34 @@ const Desenvolvimento = {
   },
 
   async criarCiclo() {
+    const sel    = document.getElementById('ciclo-colab');
+    const colUid = sel.value;
+    const colNome = sel.options[sel.selectedIndex]?.dataset.nome || '';
     const nome    = document.getElementById('ciclo-nome').value.trim();
     const periodo = document.getElementById('ciclo-periodo').value.trim();
     const erro    = document.getElementById('ciclo-erro');
-    if (!nome) { erro.textContent = 'Informe o nome do ciclo.'; return; }
+
+    if (!colUid) { erro.textContent = 'Selecione o colaborador.'; return; }
+    if (!nome)   { erro.textContent = 'Informe o nome do ciclo.'; return; }
+
+    // Verifica se já existe ciclo ativo para esse colaborador
+    const existe = await db.collection('ciclos')
+      .where('colaborador_uid', '==', colUid)
+      .where('status', '!=', 'encerrado')
+      .get();
+    if (!existe.empty) {
+      erro.textContent = `${colNome} já possui um ciclo ativo. Encerre-o antes de criar outro.`;
+      return;
+    }
 
     await db.collection('ciclos').add({
       nome, periodo,
-      setor: App.meuSetor(),
+      colaborador_uid:  colUid,
+      colaborador_nome: colNome,
+      setor:  App.currentUserData.setor || '',
+      departamento: App.currentUserData.departamento || '',
       criado_por: App.currentUser.uid,
+      criado_por_nome: App.currentUserData.nome,
       status: 'aberto',
       etapa_atual: 'auto',
       etapas_concluidas: [],
@@ -1443,104 +1556,194 @@ const Desenvolvimento = {
       resultados_liberados: {},
       criadoEm: firebase.firestore.FieldValue.serverTimestamp()
     });
+
     document.getElementById('modal-ciclo').remove();
     this.render();
   },
 
-  // ─── CONFIGURAR AVALIADORES 360° ────────────
+  async encerrarCiclo(id, nome) {
+    if (!confirm(`Encerrar o ciclo de ${nome}?\n\nApós encerrado não poderá ser reaberto.`)) return;
+    await db.collection('ciclos').doc(id).update({ status: 'encerrado' });
+    this.render();
+  },
 
-  async openConfigurar360(cicloId) {
-    const setor = App.meuSetor();
+  // ─── PAINEL DO CICLO (gestor) ─────────────
+
+  async abrirPainelCiclo(cicloId) {
+    const main = document.getElementById('main-content');
+    main.innerHTML = `<div class="page-loading"><i class="ti ti-loader spin"></i> Carregando...</div>`;
+
+    const doc  = await db.collection('ciclos').doc(cicloId).get();
+    const ciclo = { id: doc.id, ...doc.data() };
+    const colUid  = ciclo.colaborador_uid;
+    const colNome = ciclo.colaborador_nome || '—';
+
+    const autoAval   = ciclo.avaliacoes?.[colUid + '_auto'];
+    const gestorAval = ciclo.avaliacoes_gestor?.[colUid];
+    const m360       = ciclo.media_360?.[colUid];
+    const prontoGest = ciclo.pronto_para_gestor?.[colUid];
+    const liberado   = ciclo.resultados_liberados?.[colUid];
+    const config360  = ciclo.config_360?.[colUid] || [];
+
+    // Busca nome dos avaliadores 360 selecionados
+    const aval360Snap = await db.collection('avaliacoes_360')
+      .where('ciclo_id', '==', cicloId)
+      .where('avaliado_uid', '==', colUid)
+      .get();
+    const avaliacoes360 = aval360Snap.docs.map(d => ({ id: d.id, ...d.data() }));
+    const concl360 = avaliacoes360.filter(a => a.status === 'concluido').length;
+    const total360 = avaliacoes360.length;
+
+    main.innerHTML = `
+      <div class="page-header">
+        <div style="display:flex;align-items:center;gap:10px">
+          <button class="btn-icon" onclick="Desenvolvimento.render()"><i class="ti ti-arrow-left"></i></button>
+          <div>
+            <h1 class="page-title">${colNome}</h1>
+            <p class="page-sub">${ciclo.nome}${ciclo.periodo ? ' · ' + ciclo.periodo : ''}</p>
+          </div>
+        </div>
+        <span class="badge ${ciclo.status === 'encerrado' ? 'badge-default' : ciclo.status === 'em_andamento' ? 'badge-warning' : 'badge-success'}" style="font-size:13px;padding:5px 12px">
+          ${ciclo.status === 'encerrado' ? 'Encerrado' : ciclo.status === 'em_andamento' ? 'Em andamento' : 'Aberto'}
+        </span>
+      </div>
+
+      <!-- Etapas -->
+      ${this.renderEtapasColab(ciclo, colUid)}
+
+      <!-- Cards de status -->
+      <div class="saldo-cards" style="margin-bottom:24px">
+        <div class="saldo-card">
+          <span class="saldo-label"><i class="ti ti-user"></i> Autoavaliação</span>
+          <span class="saldo-num" style="font-size:16px">${autoAval ? `✅ ${autoAval.nota?.toFixed(1)}` : '⏳ Pendente'}</span>
+        </div>
+        <div class="saldo-card">
+          <span class="saldo-label"><i class="ti ti-arrows-left-right"></i> Avaliação 360°</span>
+          <span class="saldo-num" style="font-size:16px">${total360 > 0 ? `${concl360}/${total360} respondidas` : '⏳ Não iniciada'}</span>
+        </div>
+        <div class="saldo-card">
+          <span class="saldo-label"><i class="ti ti-briefcase"></i> Avaliação gestor</span>
+          <span class="saldo-num" style="font-size:16px">${gestorAval ? `✅ ${gestorAval.nota?.toFixed(1)}` : '⏳ Pendente'}</span>
+        </div>
+        ${ciclo.media_final != null ? `
+        <div class="saldo-card" style="background:var(--accent-bg);border-color:rgba(29,78,216,0.2)">
+          <span class="saldo-label" style="color:var(--accent)"><i class="ti ti-chart-bar"></i> Média final</span>
+          <span class="saldo-num" style="color:var(--accent)">${ciclo.media_final.toFixed(1)}</span>
+        </div>` : ''}
+      </div>
+
+      <!-- Ações por etapa -->
+      <div style="display:flex;flex-direction:column;gap:12px">
+
+        ${ciclo.status !== 'encerrado' && !config360.length ? `
+        <div class="ciclo-card">
+          <p style="font-weight:600;margin-bottom:8px"><i class="ti ti-settings"></i> Configurar avaliadores 360°</p>
+          <p style="font-size:13px;color:var(--text-2);margin-bottom:12px">Selecione de 3 a 5 pares que avaliarão ${colNome} anonimamente.</p>
+          <button class="btn-primary" onclick="Desenvolvimento.openConfigurar360('${cicloId}', '${colUid}', '${colNome.replace(/'/g,"\\'")}')">
+            <i class="ti ti-users"></i> Selecionar avaliadores
+          </button>
+        </div>` : ''}
+
+        ${config360.length > 0 && !autoAval ? `
+        <div class="ciclo-card">
+          <p style="font-size:13px;color:var(--text-2)"><i class="ti ti-clock"></i> Aguardando autoavaliação de <strong>${colNome}</strong></p>
+        </div>` : ''}
+
+        ${prontoGest && !gestorAval ? `
+        <div class="ciclo-card" style="border-color:var(--accent)">
+          <p style="font-weight:600;margin-bottom:8px;color:var(--accent)"><i class="ti ti-clipboard-check"></i> Sua vez de avaliar!</p>
+          <p style="font-size:13px;color:var(--text-2);margin-bottom:12px">Todos os pares já responderam. Faça sua avaliação de ${colNome}.</p>
+          <button class="btn-primary" onclick="Desenvolvimento.openAvalGestor('${cicloId}', '${colUid}', '${colNome.replace(/'/g,"\\'")}')">
+            <i class="ti ti-pencil"></i> Avaliar agora
+          </button>
+        </div>` : ''}
+
+        ${gestorAval && !liberado ? `
+        <div class="ciclo-card" style="border-color:var(--success)">
+          <p style="font-weight:600;margin-bottom:8px;color:var(--success)"><i class="ti ti-chart-bar"></i> Avaliações concluídas!</p>
+          <p style="font-size:13px;color:var(--text-2);margin-bottom:12px">Escreva o feedback e crie o PDI para liberar o resultado para ${colNome}.</p>
+          <button class="btn-primary" onclick="Desenvolvimento.openConsolidado('${cicloId}', '${colUid}')">
+            <i class="ti ti-send"></i> Ver resultado e liberar
+          </button>
+        </div>` : ''}
+
+        ${liberado ? `
+        <div class="ciclo-card">
+          <p style="font-weight:600;margin-bottom:8px"><i class="ti ti-check"></i> Resultado liberado para ${colNome}</p>
+          <button class="btn-secondary" onclick="Desenvolvimento.openConsolidado('${cicloId}', '${colUid}')">
+            <i class="ti ti-eye"></i> Ver consolidado
+          </button>
+        </div>` : ''}
+
+      </div>
+    `;
+  },
+
+  // ─── CONFIGURAR 360° para um colaborador ────
+
+  async openConfigurar360(cicloId, avaliadoUid, avaliadoNome) {
+    const dept = App.currentUserData.departamento || '';
     const snap = await db.collection('usuarios').get();
-    const equipe = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(u => !setor || u.setor === setor);
+    const equipe = snap.docs.map(d => d.data())
+      .filter(u => u.uid !== avaliadoUid && (!dept || u.departamento === dept));
 
     const cicloDoc = await db.collection('ciclos').doc(cicloId).get();
-    const ciclo = cicloDoc.data();
-    const config360 = ciclo.config_360 || {};
+    const jaConf = cicloDoc.data().config_360?.[avaliadoUid] || [];
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
     overlay.id = 'modal-conf360';
     overlay.innerHTML = `
-      <div class="modal" style="max-width:600px">
+      <div class="modal" style="max-width:520px">
         <div class="modal-header">
-          <h3>Configurar avaliadores 360°</h3>
+          <h3>Avaliadores 360° — ${avaliadoNome}</h3>
           <button class="btn-icon" onclick="document.getElementById('modal-conf360').remove()"><i class="ti ti-x"></i></button>
         </div>
-        <div class="modal-body" style="max-height:65vh;overflow-y:auto">
-          <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">
-            Para cada colaborador, selecione de 3 a 5 pares que o avaliarão anonimamente.
-          </p>
-          ${equipe.map(u => `
-            <div style="margin-bottom:18px;padding:14px;border:1px solid var(--border);border-radius:var(--radius)">
-              <p style="font-weight:600;font-size:13px;margin-bottom:8px">${u.nome} <span style="font-weight:400;color:var(--text-3)">${u.funcao ? '· ' + u.funcao : ''}</span></p>
-              <div style="display:grid;grid-template-columns:1fr 1fr;gap:6px">
-                ${equipe.filter(p => p.uid !== u.uid).map(p => `
-                  <label style="display:flex;align-items:center;gap:6px;font-size:12px;cursor:pointer">
-                    <input type="checkbox" class="cb-360-${u.uid}" value="${p.uid}"
-                      ${(config360[u.uid] || []).includes(p.uid) ? 'checked' : ''}>
-                    ${p.nome}
-                  </label>`).join('')}
-              </div>
-              <p class="count-360-${u.uid}" style="font-size:11px;color:var(--text-3);margin-top:6px">
-                ${(config360[u.uid] || []).length} selecionado(s)
-              </p>
-            </div>`).join('')}
-          <p id="conf360-erro" style="color:#E24B4A;font-size:13px;min-height:16px"></p>
+        <div class="modal-body">
+          <p style="font-size:13px;color:var(--text-2);margin-bottom:14px">Selecione de <strong>3 a 5 pares</strong> que avaliarão ${avaliadoNome} anonimamente.</p>
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:8px">
+            ${equipe.map(u => `
+              <label style="display:flex;align-items:center;gap:8px;font-size:13px;cursor:pointer;padding:8px 10px;border-radius:8px;border:1px solid var(--border)">
+                <input type="checkbox" class="cb-360" value="${u.uid}" ${jaConf.includes(u.uid) ? 'checked' : ''}>
+                <div>
+                  <p style="font-weight:500">${u.nome}</p>
+                  <p style="font-size:11px;color:var(--text-3)">${u.funcao || ''}</p>
+                </div>
+              </label>`).join('')}
+          </div>
+          <p id="cnt-360" style="font-size:12px;color:var(--text-3);margin-top:10px">${jaConf.length} de 5 selecionados</p>
+          <p id="err-360" style="color:#E24B4A;font-size:13px;margin-top:4px;min-height:16px"></p>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="document.getElementById('modal-conf360').remove()">Cancelar</button>
-          <button class="btn-primary" onclick="Desenvolvimento.salvarConf360('${cicloId}')">Salvar e iniciar ciclo</button>
+          <button class="btn-primary" onclick="Desenvolvimento.salvarConf360('${cicloId}','${avaliadoUid}')">Salvar</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
 
-    // Atualiza contadores
-    equipe.forEach(u => {
-      document.querySelectorAll(`.cb-360-${u.uid}`).forEach(cb => {
-        cb.addEventListener('change', () => {
-          const total = document.querySelectorAll(`.cb-360-${u.uid}:checked`).length;
-          const p = document.querySelector(`.count-360-${u.uid}`);
-          if (p) p.textContent = `${total} selecionado(s)`;
-          if (total > 5) cb.checked = false;
-        });
+    document.querySelectorAll('.cb-360').forEach(cb => {
+      cb.addEventListener('change', () => {
+        const t = document.querySelectorAll('.cb-360:checked').length;
+        document.getElementById('cnt-360').textContent = `${t} de 5 selecionados`;
+        if (t > 5) cb.checked = false;
       });
     });
   },
 
-  async salvarConf360(cicloId) {
-    const setor = App.meuSetor();
-    const snap = await db.collection('usuarios').get();
-    const equipe = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(u => !setor || u.setor === setor);
-
-    const erro = document.getElementById('conf360-erro');
-    const config360 = {};
-
-    for (const u of equipe) {
-      const selecionados = [...document.querySelectorAll(`.cb-360-${u.uid}:checked`)].map(c => c.value);
-      if (selecionados.length > 0 && (selecionados.length < 3 || selecionados.length > 5)) {
-        erro.textContent = `${u.nome}: selecione entre 3 e 5 avaliadores (ou nenhum).`;
-        return;
-      }
-      if (selecionados.length >= 3) config360[u.uid] = selecionados;
+  async salvarConf360(cicloId, avaliadoUid) {
+    const selecionados = [...document.querySelectorAll('.cb-360:checked')].map(c => c.value);
+    const erro = document.getElementById('err-360');
+    if (selecionados.length < 3 || selecionados.length > 5) {
+      erro.textContent = 'Selecione entre 3 e 5 avaliadores.'; return;
     }
 
-    if (Object.keys(config360).length === 0) {
-      erro.textContent = 'Configure pelo menos um colaborador.';
-      return;
-    }
-
-    // Salva config e muda status para em_andamento
     await db.collection('ciclos').doc(cicloId).update({
-      config_360: config360,
-      status: 'em_andamento',
-      etapa_atual: 'auto'
+      [`config_360.${avaliadoUid}`]: selecionados,
+      status: 'em_andamento'
     });
 
     document.getElementById('modal-conf360').remove();
-    this.render();
+    this.abrirPainelCiclo(cicloId);
   },
 
   // ─── AUTOAVALIAÇÃO ──────────────────────────
@@ -1556,28 +1759,26 @@ const Desenvolvimento = {
           <button class="btn-icon" onclick="document.getElementById('modal-auto').remove()"><i class="ti ti-x"></i></button>
         </div>
         <div class="modal-body" style="max-height:65vh;overflow-y:auto">
-          <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">Avalie seu desempenho com honestidade. Suas respostas só serão visíveis após o ciclo completo.</p>
+          <p style="font-size:13px;color:var(--text-2);margin-bottom:16px">Suas respostas só serão visíveis após o ciclo completo.</p>
           ${this.renderCriterios('auto')}
-          <label class="form-label" style="margin-top:16px">Comentário livre (opcional)</label>
+          <label class="form-label" style="margin-top:16px">Comentário (opcional)</label>
           <textarea class="inp" id="auto-coment" rows="3" placeholder="Pontos que você gostaria de destacar..."></textarea>
-          <p id="auto-erro" style="color:#E24B4A;font-size:13px;margin:8px 0 0;min-height:16px"></p>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="document.getElementById('modal-auto').remove()">Cancelar</button>
-          <button class="btn-primary" onclick="Desenvolvimento.salvarAutoavaliacao('${cicloId}')">Enviar autoavaliação</button>
+          <button class="btn-primary" onclick="Desenvolvimento.salvarAutoavaliacao('${cicloId}')">Enviar</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
   },
 
   renderCriterios(pfx) {
-    const criterios = [
-      { id: 'entrega',      label: 'Entrega de resultados' },
-      { id: 'comunicacao',  label: 'Comunicação e colaboração' },
-      { id: 'iniciativa',   label: 'Iniciativa e proatividade' },
-      { id: 'tecnico',      label: 'Conhecimento técnico' },
-    ];
-    return criterios.map(c => `
+    return [
+      { id: 'entrega',     label: 'Entrega de resultados' },
+      { id: 'comunicacao', label: 'Comunicação e colaboração' },
+      { id: 'iniciativa',  label: 'Iniciativa e proatividade' },
+      { id: 'tecnico',     label: 'Conhecimento técnico' },
+    ].map(c => `
       <div style="margin-bottom:14px">
         <label class="form-label">${c.label}</label>
         <div style="display:flex;align-items:center;gap:10px">
@@ -1595,46 +1796,44 @@ const Desenvolvimento = {
   },
 
   async salvarAutoavaliacao(cicloId) {
-    const uid = App.currentUser.uid;
-    const nota = this.calcMedia('auto');
-    const comentario = document.getElementById('auto-coment').value.trim();
+    const uid   = App.currentUser.uid;
+    const nota  = this.calcMedia('auto');
+    const coment = document.getElementById('auto-coment').value.trim();
 
     await db.collection('ciclos').doc(cicloId).update({
-      [`avaliacoes.${uid}_auto`]: { nota, comentario, criadoEm: new Date().toISOString() }
+      [`avaliacoes.${uid}_auto`]: { nota, comentario: coment, criadoEm: new Date().toISOString() }
     });
 
-    // Cria solicitações 360 para os pares desse colaborador
+    // Cria solicitações 360 para os pares
     const cicloDoc = await db.collection('ciclos').doc(cicloId).get();
     const pares = cicloDoc.data().config_360?.[uid] || [];
     for (const parUid of pares) {
-      await db.collection('avaliacoes_360').add({
-        ciclo_id: cicloId,
-        avaliado_uid: uid,
-        avaliador_uid: parUid,
-        status: 'pendente',
-        criadoEm: firebase.firestore.FieldValue.serverTimestamp()
-      });
+      const jaExiste = await db.collection('avaliacoes_360')
+        .where('ciclo_id','==',cicloId).where('avaliador_uid','==',parUid).get();
+      if (jaExiste.empty) {
+        await db.collection('avaliacoes_360').add({
+          ciclo_id: cicloId, avaliado_uid: uid, avaliador_uid: parUid,
+          status: 'pendente', criadoEm: firebase.firestore.FieldValue.serverTimestamp()
+        });
+      }
     }
 
     document.getElementById('modal-auto').remove();
     this.render();
   },
 
-  // ─── AVALIAÇÃO 360° (pares respondem) ───────
+  // ─── RESPONDER 360° ─────────────────────────
 
   async openPendentes360() {
     const uid = App.currentUser.uid;
     const snap = await db.collection('avaliacoes_360')
-      .where('avaliador_uid', '==', uid)
-      .where('status', '==', 'pendente')
-      .get();
+      .where('avaliador_uid','==',uid).where('status','==','pendente').get();
     const pendentes = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    if (pendentes.length === 0) { this.render(); return; }
+    if (!pendentes.length) { this.render(); return; }
 
-    // Pega o primeiro pendente
     const aval = pendentes[0];
-    const avaliadoDoc = await db.collection('usuarios').doc(aval.avaliado_uid).get();
-    const avaliado = avaliadoDoc.data();
+    const avalDoc = await db.collection('usuarios').doc(aval.avaliado_uid).get();
+    const avaliado = avalDoc.data();
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -1646,16 +1845,16 @@ const Desenvolvimento = {
           <button class="btn-icon" onclick="document.getElementById('modal-360resp').remove()"><i class="ti ti-x"></i></button>
         </div>
         <div class="modal-body" style="max-height:65vh;overflow-y:auto">
-          <p style="font-size:13px;color:var(--text-2);margin-bottom:4px">Avalie o desempenho de <strong>${avaliado?.nome || 'seu colega'}</strong>.</p>
+          <p style="font-size:13px;color:var(--text-2);margin-bottom:4px">Avalie <strong>${avaliado?.nome}</strong> com honestidade.</p>
           <p style="font-size:12px;color:var(--text-3);margin-bottom:16px"><i class="ti ti-lock"></i> Sua identidade não será revelada.</p>
           ${this.renderCriterios('p360')}
           <label class="form-label" style="margin-top:16px">Comentário (opcional)</label>
-          <textarea class="inp" id="p360-coment" rows="3" placeholder="Observações sobre o colega..."></textarea>
-          <p style="font-size:12px;color:var(--text-3);margin-top:6px">${pendentes.length} avaliação${pendentes.length > 1 ? 'ões' : ''} pendente${pendentes.length > 1 ? 's' : ''}</p>
+          <textarea class="inp" id="p360-coment" rows="3" placeholder="Observações..."></textarea>
+          <p style="font-size:12px;color:var(--text-3);margin-top:6px">${pendentes.length} avaliação${pendentes.length>1?'ões':''} pendente${pendentes.length>1?'s':''}</p>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="document.getElementById('modal-360resp').remove()">Cancelar</button>
-          <button class="btn-primary" onclick="Desenvolvimento.salvar360Resp('${aval.id}', '${aval.ciclo_id}', '${aval.avaliado_uid}')">Enviar avaliação</button>
+          <button class="btn-primary" onclick="Desenvolvimento.salvar360Resp('${aval.id}','${aval.ciclo_id}','${aval.avaliado_uid}')">Enviar</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
@@ -1663,129 +1862,31 @@ const Desenvolvimento = {
 
   async salvar360Resp(avalId, cicloId, avaliadoUid) {
     const nota = this.calcMedia('p360');
-    const comentario = document.getElementById('p360-coment').value.trim();
-    const avaliadorUid = App.currentUser.uid;
+    const coment = document.getElementById('p360-coment').value.trim();
 
-    // Marca como concluída
     await db.collection('avaliacoes_360').doc(avalId).update({
-      status: 'concluido',
-      nota, comentario,
+      status: 'concluido', nota, comentario: coment,
       concluidoEm: firebase.firestore.FieldValue.serverTimestamp()
     });
 
-    // Verifica se todos os pares desse colaborador já responderam
-    const cicloDoc = await db.collection('ciclos').doc(cicloId).get();
-    const pares = cicloDoc.data().config_360?.[avaliadoUid] || [];
-
+    // Verifica se todos os pares responderam
     const restSnap = await db.collection('avaliacoes_360')
-      .where('ciclo_id', '==', cicloId)
-      .where('avaliado_uid', '==', avaliadoUid)
-      .where('status', '==', 'pendente')
-      .get();
+      .where('ciclo_id','==',cicloId).where('avaliado_uid','==',avaliadoUid).where('status','==','pendente').get();
 
     if (restSnap.empty) {
-      // Todos os pares responderam — calcula média 360 e libera etapa do gestor
       const todasSnap = await db.collection('avaliacoes_360')
-        .where('ciclo_id', '==', cicloId)
-        .where('avaliado_uid', '==', avaliadoUid)
-        .get();
+        .where('ciclo_id','==',cicloId).where('avaliado_uid','==',avaliadoUid).get();
       const notas = todasSnap.docs.map(d => d.data().nota).filter(n => n != null);
-      const media360 = notas.reduce((a, b) => a + b, 0) / notas.length;
-
+      const m360  = notas.reduce((a,b) => a+b, 0) / notas.length;
       await db.collection('ciclos').doc(cicloId).update({
-        [`media_360.${avaliadoUid}`]: media360,
-        [`pronto_para_gestor.${avaliadoUid}`]: true
+        [`media_360.${avaliadoUid}`]: m360,
+        [`pronto_para_gestor.${avaliadoUid}`]: true,
+        etapa_atual: 'gestor'
       });
     }
 
     document.getElementById('modal-360resp').remove();
     this.render();
-  },
-
-  // ─── PAINEL DO CICLO (gestor) ────────────────
-
-  async verPainelCiclo(cicloId) {
-    const main = document.getElementById('main-content');
-    main.innerHTML = `<div class="page-loading"><i class="ti ti-loader spin"></i> Carregando painel...</div>`;
-
-    const cicloDoc = await db.collection('ciclos').doc(cicloId).get();
-    const ciclo = { id: cicloDoc.id, ...cicloDoc.data() };
-    const config360 = ciclo.config_360 || {};
-    const avaliacoes = ciclo.avaliacoes || {};
-    const avalGestor = ciclo.avaliacoes_gestor || {};
-    const media360 = ciclo.media_360 || {};
-    const prontoGestor = ciclo.pronto_para_gestor || {};
-    const resultadosLib = ciclo.resultados_liberados || {};
-
-    // Busca nomes
-    const uids = Object.keys(config360);
-    const nomes = {};
-    for (const uid of uids) {
-      const u = await db.collection('usuarios').doc(uid).get();
-      if (u.exists) nomes[uid] = u.data();
-    }
-
-    main.innerHTML = `
-      <div class="page-header">
-        <div>
-          <button class="btn-icon" onclick="Desenvolvimento.render()" style="margin-right:8px"><i class="ti ti-arrow-left"></i></button>
-          <h1 class="page-title" style="display:inline">${ciclo.nome}</h1>
-          <p class="page-sub" style="margin-top:4px">${ciclo.periodo || ''} · Painel do gestor</p>
-        </div>
-      </div>
-
-      <div class="table-wrap">
-        <table class="table">
-          <thead>
-            <tr>
-              <th>Colaborador</th>
-              <th>Autoav.</th>
-              <th>360°</th>
-              <th>Gestor</th>
-              <th>Média</th>
-              <th>Ação</th>
-            </tr>
-          </thead>
-          <tbody>
-            ${uids.map(uid => {
-              const u = nomes[uid];
-              const autoNota = avaliacoes[uid + '_autos']?.nota || avaliacoes[uid + '_auto']?.nota || null;
-              const m360 = media360[uid];
-              const gestNota = avalGestor[uid]?.nota;
-              const partes = [autoNota, m360, gestNota].filter(v => v != null);
-              const media = partes.length === 3 ? (partes.reduce((a,b)=>a+b,0)/3).toFixed(1) : '—';
-              const liberado = resultadosLib[uid];
-
-              let acao = '';
-              if (!avaliacoes[uid + '_auto'] && !avaliacoes[uid + '_autos']) {
-                acao = `<span style="font-size:12px;color:var(--text-3)">Aguardando autoav.</span>`;
-              } else if (!prontoGestor[uid]) {
-                acao = `<span style="font-size:12px;color:var(--text-3)">Aguardando pares 360°</span>`;
-              } else if (!avalGestor[uid]) {
-                acao = `<button class="btn-primary" style="font-size:12px;padding:5px 10px" onclick="Desenvolvimento.openAvalGestor('${cicloId}','${uid}','${u?.nome || ''}')">Avaliar</button>`;
-              } else if (!liberado) {
-                acao = `<button class="btn-secondary" style="font-size:12px;padding:5px 10px" onclick="Desenvolvimento.openConsolidado('${cicloId}','${uid}')">Ver resultado</button>`;
-              } else {
-                acao = `<span style="font-size:12px;color:var(--success)"><i class="ti ti-check"></i> Concluído</span>`;
-              }
-
-              return `
-                <tr>
-                  <td>
-                    <p style="font-weight:500">${u?.nome || uid}</p>
-                    <p style="font-size:11px;color:var(--text-3)">${u?.funcao || ''}</p>
-                  </td>
-                  <td>${autoNota != null ? autoNota.toFixed(1) : '—'}</td>
-                  <td>${m360 != null ? m360.toFixed(1) : '—'}</td>
-                  <td>${gestNota != null ? gestNota.toFixed(1) : '—'}</td>
-                  <td><strong>${media}</strong></td>
-                  <td>${acao}</td>
-                </tr>`;
-            }).join('')}
-          </tbody>
-        </table>
-      </div>
-    `;
   },
 
   // ─── AVALIAÇÃO DO GESTOR ────────────────────
@@ -1802,57 +1903,57 @@ const Desenvolvimento = {
         </div>
         <div class="modal-body" style="max-height:65vh;overflow-y:auto">
           ${this.renderCriterios('gest')}
-          <label class="form-label" style="margin-top:16px">Comentário do gestor</label>
+          <label class="form-label" style="margin-top:16px">Comentário</label>
           <textarea class="inp" id="gest-coment" rows="3" placeholder="Pontos de destaque e desenvolvimento..."></textarea>
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="document.getElementById('modal-gest').remove()">Cancelar</button>
-          <button class="btn-primary" onclick="Desenvolvimento.salvarAvalGestor('${cicloId}','${avaliadoUid}','${avaliadoNome}')">Salvar avaliação</button>
+          <button class="btn-primary" onclick="Desenvolvimento.salvarAvalGestor('${cicloId}','${avaliadoUid}')">Salvar avaliação</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
   },
 
-  async salvarAvalGestor(cicloId, avaliadoUid, avaliadoNome) {
-    const nota = this.calcMedia('gest');
-    const comentario = document.getElementById('gest-coment').value.trim();
+  async salvarAvalGestor(cicloId, avaliadoUid) {
+    const nota   = this.calcMedia('gest');
+    const coment = document.getElementById('gest-coment').value.trim();
 
     await db.collection('ciclos').doc(cicloId).update({
-      [`avaliacoes_gestor.${avaliadoUid}`]: {
-        nota, comentario,
-        avaliador: App.currentUser.uid,
-        criadoEm: new Date().toISOString()
-      }
+      [`avaliacoes_gestor.${avaliadoUid}`]: { nota, comentario: coment, criadoEm: new Date().toISOString() },
+      etapa_atual: 'resultado'
     });
+
     document.getElementById('modal-gest').remove();
-    this.verPainelCiclo(cicloId);
+    this.abrirPainelCiclo(cicloId);
   },
 
-  // ─── CONSOLIDADO (gestor vê, dá feedback, cria PDI) ──
+  // ─── CONSOLIDADO ────────────────────────────
 
   async openConsolidado(cicloId, avaliadoUid) {
     const cicloDoc = await db.collection('ciclos').doc(cicloId).get();
-    const ciclo = cicloDoc.data();
-    const avaliadoDoc = await db.collection('usuarios').doc(avaliadoUid).get();
-    const avaliado = avaliadoDoc.data();
+    const ciclo    = cicloDoc.data();
+    const avalDoc  = await db.collection('usuarios').doc(avaliadoUid).get();
+    const avaliado = avalDoc.data();
 
-    const autoNota = ciclo.avaliacoes?.[avaliadoUid + '_auto']?.nota
-                  || ciclo.avaliacoes?.[avaliadoUid + '_autos']?.nota || null;
-    const autoComent = ciclo.avaliacoes?.[avaliadoUid + '_auto']?.comentario
-                    || ciclo.avaliacoes?.[avaliadoUid + '_autos']?.comentario || '';
-    const m360   = ciclo.media_360?.[avaliadoUid];
-    const gestNota = ciclo.avaliacoes_gestor?.[avaliadoUid]?.nota;
+    const autoNota   = ciclo.avaliacoes?.[avaliadoUid + '_auto']?.nota || null;
+    const autoComent = ciclo.avaliacoes?.[avaliadoUid + '_auto']?.comentario || '';
+    const m360       = ciclo.media_360?.[avaliadoUid] || null;
+    const gestNota   = ciclo.avaliacoes_gestor?.[avaliadoUid]?.nota || null;
     const gestComent = ciclo.avaliacoes_gestor?.[avaliadoUid]?.comentario || '';
 
-    // Busca comentários 360 (sem identificar autor)
     const snap360 = await db.collection('avaliacoes_360')
-      .where('ciclo_id', '==', cicloId)
-      .where('avaliado_uid', '==', avaliadoUid)
-      .get();
+      .where('ciclo_id','==',cicloId).where('avaliado_uid','==',avaliadoUid).get();
     const coments360 = snap360.docs.map(d => d.data().comentario).filter(Boolean);
 
     const partes = [autoNota, m360, gestNota].filter(v => v != null);
-    const media = partes.length ? (partes.reduce((a,b)=>a+b,0)/partes.length).toFixed(1) : '—';
+    const media  = partes.length ? partes.reduce((a,b)=>a+b,0)/partes.length : null;
+
+    if (media != null) {
+      await db.collection('ciclos').doc(cicloId).update({ media_final: media });
+    }
+
+    const pdisAtuais = ciclo.pdis_ciclo?.[avaliadoUid] || [];
+    const feedbackAtual = ciclo.feedbacks_gestor?.[avaliadoUid] || '';
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -1860,124 +1961,97 @@ const Desenvolvimento = {
     overlay.innerHTML = `
       <div class="modal" style="max-width:580px">
         <div class="modal-header">
-          <h3>Resultado — ${avaliado?.nome || ''}</h3>
+          <h3>Resultado — ${avaliado?.nome}</h3>
           <button class="btn-icon" onclick="document.getElementById('modal-consol').remove()"><i class="ti ti-x"></i></button>
         </div>
         <div class="modal-body" style="max-height:72vh;overflow-y:auto">
 
-          <!-- Notas -->
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
             ${[
               { label: 'Autoavaliação', val: autoNota },
               { label: '360°', val: m360 },
               { label: 'Gestor', val: gestNota },
-              { label: 'Média final', val: parseFloat(media), destaque: true }
+              { label: 'Média final', val: media, destaque: true }
             ].map(n => `
-              <div style="text-align:center;padding:12px;background:${n.destaque ? 'var(--accent-bg)' : 'var(--bg)'};border-radius:var(--radius);border:1px solid var(--border)">
+              <div style="text-align:center;padding:12px;background:${n.destaque?'var(--accent-bg)':'var(--bg)'};border-radius:var(--radius);border:1px solid var(--border)">
                 <p style="font-size:11px;color:var(--text-2);margin-bottom:4px">${n.label}</p>
-                <p style="font-size:${n.destaque ? '22px' : '18px'};font-weight:700;color:${n.destaque ? 'var(--accent)' : 'var(--text)'}">${n.val != null ? n.val.toFixed(1) : '—'}</p>
+                <p style="font-size:${n.destaque?'22px':'18px'};font-weight:700;color:${n.destaque?'var(--accent)':'var(--text)'}">${n.val!=null?n.val.toFixed(1):'—'}</p>
               </div>`).join('')}
           </div>
 
-          <!-- Comentários -->
-          ${autoComent ? `
-          <div style="margin-bottom:14px">
-            <p style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:4px">Comentário — Autoavaliação</p>
-            <p style="font-size:13px;padding:10px;background:var(--bg);border-radius:8px">${autoComent}</p>
-          </div>` : ''}
-
-          ${coments360.length > 0 ? `
-          <div style="margin-bottom:14px">
-            <p style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:4px">Comentários 360° (anônimos)</p>
-            ${coments360.map(c => `<p style="font-size:13px;padding:8px 10px;background:var(--bg);border-radius:8px;margin-bottom:6px">"${c}"</p>`).join('')}
-          </div>` : ''}
-
-          ${gestComent ? `
-          <div style="margin-bottom:14px">
-            <p style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:4px">Comentário do gestor</p>
-            <p style="font-size:13px;padding:10px;background:var(--bg);border-radius:8px">${gestComent}</p>
-          </div>` : ''}
+          ${autoComent ? `<div style="margin-bottom:14px"><p style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:4px">Comentário — Autoavaliação</p><p style="font-size:13px;padding:10px;background:var(--bg);border-radius:8px">${autoComent}</p></div>` : ''}
+          ${coments360.length > 0 ? `<div style="margin-bottom:14px"><p style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:4px">Comentários 360° (anônimos)</p>${coments360.map(c=>`<p style="font-size:13px;padding:8px 10px;background:var(--bg);border-radius:8px;margin-bottom:6px">"${c}"</p>`).join('')}</div>` : ''}
+          ${gestComent ? `<div style="margin-bottom:14px"><p style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:4px">Comentário do gestor</p><p style="font-size:13px;padding:10px;background:var(--bg);border-radius:8px">${gestComent}</p></div>` : ''}
 
           <hr style="border:none;border-top:1px solid var(--border);margin:18px 0">
-
-          <!-- Feedback do gestor -->
-          <p style="font-weight:600;font-size:14px;margin-bottom:10px">Feedback para o colaborador</p>
-          <textarea class="inp" id="consol-feedback" rows="3" placeholder="Escreva um feedback que o colaborador verá após a conclusão...">${ciclo.feedbacks_gestor?.[avaliadoUid] || ''}</textarea>
+          <p style="font-weight:600;font-size:14px;margin-bottom:10px">Feedback para ${avaliado?.nome}</p>
+          <textarea class="inp" id="consol-feedback" rows="3" placeholder="Escreva um feedback que o colaborador verá...">${feedbackAtual}</textarea>
 
           <hr style="border:none;border-top:1px solid var(--border);margin:18px 0">
-
-          <!-- PDI -->
           <p style="font-weight:600;font-size:14px;margin-bottom:10px">Plano de Desenvolvimento Individual</p>
-          <div id="pdi-ciclo-lista">
-            ${(ciclo.pdis_ciclo?.[avaliadoUid] || []).map((p, i) => `
-              <div style="display:flex;gap:8px;align-items:flex-start;margin-bottom:8px">
-                <input class="inp" style="flex:1" value="${p.titulo}" id="pdi-ciclo-${i}-titulo" placeholder="Meta de desenvolvimento">
-                <input class="inp" style="width:120px" type="date" value="${p.prazo || ''}" id="pdi-ciclo-${i}-prazo">
+          <div id="pdi-lista">
+            ${pdisAtuais.map((p,i) => `
+              <div style="display:flex;gap:8px;margin-bottom:8px">
+                <input class="inp" style="flex:1" id="pdi-${i}-titulo" value="${p.titulo}" placeholder="Meta">
+                <input class="inp" style="width:130px" type="date" id="pdi-${i}-prazo" value="${p.prazo||''}">
               </div>`).join('')}
           </div>
-          <button class="btn-secondary" style="font-size:12px;margin-top:4px" onclick="Desenvolvimento.addPdiCicloLinha()">
+          <button class="btn-secondary" style="font-size:12px" onclick="Desenvolvimento.addPdiLinha()">
             <i class="ti ti-plus"></i> Adicionar meta
           </button>
-
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="document.getElementById('modal-consol').remove()">Fechar</button>
-          <button class="btn-primary" onclick="Desenvolvimento.salvarConsolidado('${cicloId}','${avaliadoUid}')">Salvar e liberar resultado</button>
+          <button class="btn-primary" onclick="Desenvolvimento.salvarConsolidado('${cicloId}','${avaliadoUid}')">
+            <i class="ti ti-send"></i> Salvar e liberar resultado
+          </button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
   },
 
-  addPdiCicloLinha() {
-    const lista = document.getElementById('pdi-ciclo-lista');
+  addPdiLinha() {
+    const lista = document.getElementById('pdi-lista');
     const i = lista.children.length;
     const div = document.createElement('div');
-    div.style.cssText = 'display:flex;gap:8px;align-items:flex-start;margin-bottom:8px';
+    div.style.cssText = 'display:flex;gap:8px;margin-bottom:8px';
     div.innerHTML = `
-      <input class="inp" style="flex:1" id="pdi-ciclo-${i}-titulo" placeholder="Meta de desenvolvimento">
-      <input class="inp" style="width:120px" type="date" id="pdi-ciclo-${i}-prazo">`;
+      <input class="inp" style="flex:1" id="pdi-${i}-titulo" placeholder="Meta de desenvolvimento">
+      <input class="inp" style="width:130px" type="date" id="pdi-${i}-prazo">`;
     lista.appendChild(div);
   },
 
   async salvarConsolidado(cicloId, avaliadoUid) {
     const feedback = document.getElementById('consol-feedback').value.trim();
-    const lista = document.getElementById('pdi-ciclo-lista');
-    const pdis = [];
+    const lista    = document.getElementById('pdi-lista');
+    const pdis     = [];
     for (let i = 0; i < lista.children.length; i++) {
-      const titulo = document.getElementById(`pdi-ciclo-${i}-titulo`)?.value.trim();
-      const prazo  = document.getElementById(`pdi-ciclo-${i}-prazo`)?.value;
+      const titulo = document.getElementById(`pdi-${i}-titulo`)?.value.trim();
+      const prazo  = document.getElementById(`pdi-${i}-prazo`)?.value;
       if (titulo) pdis.push({ titulo, prazo: prazo || '' });
     }
 
-    // Salva feedback e PDIs no ciclo
     await db.collection('ciclos').doc(cicloId).update({
       [`feedbacks_gestor.${avaliadoUid}`]: feedback,
       [`pdis_ciclo.${avaliadoUid}`]: pdis,
       [`resultados_liberados.${avaliadoUid}`]: true
     });
 
-    // Cria PDIs reais na coleção pdis para o colaborador acompanhar
     for (const p of pdis) {
-      const existe = await db.collection('pdis')
-        .where('uid', '==', avaliadoUid)
-        .where('titulo', '==', p.titulo)
-        .where('ciclo_id', '==', cicloId)
-        .get();
-      if (existe.empty) {
+      const ex = await db.collection('pdis')
+        .where('uid','==',avaliadoUid).where('titulo','==',p.titulo).where('ciclo_id','==',cicloId).get();
+      if (ex.empty) {
         await db.collection('pdis').add({
-          uid: avaliadoUid,
-          ciclo_id: cicloId,
-          titulo: p.titulo,
-          prazo: p.prazo,
-          status: 'pendente',
-          descricao: '',
+          uid: avaliadoUid, ciclo_id: cicloId,
+          titulo: p.titulo, prazo: p.prazo,
+          status: 'pendente', descricao: '',
           criadoEm: firebase.firestore.FieldValue.serverTimestamp()
         });
       }
     }
 
     document.getElementById('modal-consol').remove();
-    this.verPainelCiclo(cicloId);
+    this.abrirPainelCiclo(cicloId);
   },
 
   // ─── RESULTADO DO COLABORADOR ────────────────
@@ -1987,14 +2061,13 @@ const Desenvolvimento = {
     const cicloDoc = await db.collection('ciclos').doc(cicloId).get();
     const ciclo = cicloDoc.data();
 
-    const autoNota = ciclo.avaliacoes?.[uid + '_auto']?.nota;
-    const m360     = ciclo.media_360?.[uid];
-    const gestNota = ciclo.avaliacoes_gestor?.[uid]?.nota;
+    const autoNota = ciclo.avaliacoes?.[uid + '_auto']?.nota || null;
+    const m360     = ciclo.media_360?.[uid] || null;
+    const gestNota = ciclo.avaliacoes_gestor?.[uid]?.nota || null;
     const feedback = ciclo.feedbacks_gestor?.[uid] || '';
     const pdis     = ciclo.pdis_ciclo?.[uid] || [];
-
-    const partes = [autoNota, m360, gestNota].filter(v => v != null);
-    const media = partes.length ? (partes.reduce((a,b)=>a+b,0)/partes.length).toFixed(1) : '—';
+    const partes   = [autoNota, m360, gestNota].filter(v => v != null);
+    const media    = partes.length ? partes.reduce((a,b)=>a+b,0)/partes.length : null;
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -2006,37 +2079,30 @@ const Desenvolvimento = {
           <button class="btn-icon" onclick="document.getElementById('modal-meuresult').remove()"><i class="ti ti-x"></i></button>
         </div>
         <div class="modal-body" style="max-height:70vh;overflow-y:auto">
-
           <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:20px">
             ${[
-              { label: 'Autoavaliação', val: autoNota },
-              { label: '360°', val: m360 },
-              { label: 'Gestor', val: gestNota },
-              { label: 'Média final', val: parseFloat(media), destaque: true }
-            ].map(n => `
-              <div style="text-align:center;padding:12px;background:${n.destaque ? 'var(--accent-bg)' : 'var(--bg)'};border-radius:var(--radius);border:1px solid var(--border)">
+              {label:'Autoavaliação',val:autoNota},
+              {label:'360°',val:m360},
+              {label:'Gestor',val:gestNota},
+              {label:'Média final',val:media,destaque:true}
+            ].map(n=>`
+              <div style="text-align:center;padding:12px;background:${n.destaque?'var(--accent-bg)':'var(--bg)'};border-radius:var(--radius);border:1px solid var(--border)">
                 <p style="font-size:11px;color:var(--text-2);margin-bottom:4px">${n.label}</p>
-                <p style="font-size:${n.destaque ? '22px' : '18px'};font-weight:700;color:${n.destaque ? 'var(--accent)' : 'var(--text)'}">${n.val != null ? n.val.toFixed(1) : '—'}</p>
+                <p style="font-size:${n.destaque?'22px':'18px'};font-weight:700;color:${n.destaque?'var(--accent)':'var(--text)'}">${n.val!=null?n.val.toFixed(1):'—'}</p>
               </div>`).join('')}
           </div>
-
           ${feedback ? `
-          <div style="margin-bottom:18px;padding:14px;background:var(--accent-bg);border-radius:var(--radius);border:1px solid rgba(29,78,216,0.15)">
+          <div style="margin-bottom:18px;padding:14px;background:var(--accent-bg);border-radius:var(--radius)">
             <p style="font-size:12px;font-weight:600;color:var(--accent);margin-bottom:6px"><i class="ti ti-message-circle"></i> Feedback do gestor</p>
-            <p style="font-size:13px;color:var(--text)">${feedback}</p>
+            <p style="font-size:13px">${feedback}</p>
           </div>` : ''}
-
           ${pdis.length > 0 ? `
-          <div>
-            <p style="font-weight:600;font-size:14px;margin-bottom:10px">Seu PDI</p>
-            ${pdis.map(p => `
-              <div class="pdi-card">
-                <div class="pdi-header">
-                  <span class="pdi-titulo">${p.titulo}</span>
-                </div>
-                ${p.prazo ? `<p style="font-size:12px;color:var(--text-3)"><i class="ti ti-calendar"></i> Prazo: ${App.formatDate(p.prazo)}</p>` : ''}
-              </div>`).join('')}
-          </div>` : ''}
+          <p style="font-weight:600;font-size:14px;margin-bottom:10px">Meu PDI</p>
+          ${pdis.map(p=>`
+            <div class="pdi-card">
+              <div class="pdi-header"><span class="pdi-titulo">${p.titulo}</span></div>
+              ${p.prazo?`<p style="font-size:12px;color:var(--text-3)"><i class="ti ti-calendar"></i> Prazo: ${App.formatDate(p.prazo)}</p>`:''}
+            </div>`).join('')}` : ''}
         </div>
         <div class="modal-footer">
           <button class="btn-primary" onclick="document.getElementById('modal-meuresult').remove()">Fechar</button>
@@ -2048,10 +2114,10 @@ const Desenvolvimento = {
   // ─── FEEDBACK PONTUAL ───────────────────────
 
   async openFeedback() {
-    const setor = App.currentUserData.setor || '';
+    const dept = App.currentUserData.departamento || '';
     const snap = await db.collection('usuarios').get();
-    const colegas = snap.docs.map(d => ({ id: d.id, ...d.data() }))
-      .filter(u => u.uid !== App.currentUser.uid && (!setor || u.setor === setor));
+    const colegas = snap.docs.map(d => d.data())
+      .filter(u => u.uid !== App.currentUser.uid && (!dept || u.departamento === dept));
 
     const overlay = document.createElement('div');
     overlay.className = 'modal-overlay';
@@ -2066,7 +2132,7 @@ const Desenvolvimento = {
           <label class="form-label">Para quem</label>
           <select class="inp" id="fb-dest">
             <option value="">Selecione...</option>
-            ${colegas.map(c => `<option value="${c.uid}">${c.nome}</option>`).join('')}
+            ${colegas.map(c=>`<option value="${c.uid}">${c.nome}</option>`).join('')}
           </select>
           <label class="form-label" style="margin-top:12px">Tipo</label>
           <select class="inp" id="fb-tipo">
@@ -2094,7 +2160,6 @@ const Desenvolvimento = {
     const erro = document.getElementById('fb-erro');
     if (!dest) { erro.textContent = 'Selecione o destinatário.'; return; }
     if (!msg)  { erro.textContent = 'Escreva a mensagem.'; return; }
-
     await db.collection('feedbacks').add({
       destinatario_uid: dest, tipo, mensagem: msg,
       criadoEm: firebase.firestore.FieldValue.serverTimestamp()
@@ -2105,10 +2170,7 @@ const Desenvolvimento = {
 
   // ─── PDI (colaborador gerencia) ─────────────
 
-  openNovoPDI() {
-    this._modalPDI(null, null);
-  },
-
+  openNovoPDI() { this._modalPDI(null, null); },
   async editarPDI(id) {
     const doc = await db.collection('pdis').doc(id).get();
     this._modalPDI(id, doc.data());
@@ -2121,25 +2183,25 @@ const Desenvolvimento = {
     overlay.innerHTML = `
       <div class="modal">
         <div class="modal-header">
-          <h3>${id ? 'Editar meta' : 'Nova meta de desenvolvimento'}</h3>
+          <h3>${id ? 'Editar meta' : 'Nova meta'}</h3>
           <button class="btn-icon" onclick="document.getElementById('modal-pdi').remove()"><i class="ti ti-x"></i></button>
         </div>
         <div class="modal-body">
           <label class="form-label">Título</label>
-          <input class="inp" id="pdi-titulo" value="${p?.titulo || ''}">
+          <input class="inp" id="pdi-titulo" value="${p?.titulo||''}">
           <label class="form-label" style="margin-top:12px">Descrição</label>
-          <textarea class="inp" id="pdi-desc" rows="3">${p?.descricao || ''}</textarea>
+          <textarea class="inp" id="pdi-desc" rows="3">${p?.descricao||''}</textarea>
           <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-top:12px">
             <div>
               <label class="form-label">Prazo</label>
-              <input class="inp" type="date" id="pdi-prazo" value="${p?.prazo || ''}">
+              <input class="inp" type="date" id="pdi-prazo" value="${p?.prazo||''}">
             </div>
             <div>
               <label class="form-label">Status</label>
               <select class="inp" id="pdi-status">
-                <option value="pendente" ${p?.status === 'pendente' || !p ? 'selected' : ''}>Pendente</option>
-                <option value="em_andamento" ${p?.status === 'em_andamento' ? 'selected' : ''}>Em andamento</option>
-                <option value="concluido" ${p?.status === 'concluido' ? 'selected' : ''}>Concluído</option>
+                <option value="pendente" ${!p||p?.status==='pendente'?'selected':''}>Pendente</option>
+                <option value="em_andamento" ${p?.status==='em_andamento'?'selected':''}>Em andamento</option>
+                <option value="concluido" ${p?.status==='concluido'?'selected':''}>Concluído</option>
               </select>
             </div>
           </div>
@@ -2147,7 +2209,7 @@ const Desenvolvimento = {
         </div>
         <div class="modal-footer">
           <button class="btn-secondary" onclick="document.getElementById('modal-pdi').remove()">Cancelar</button>
-          <button class="btn-primary" onclick="Desenvolvimento.salvarPDI('${id || ''}')">Salvar</button>
+          <button class="btn-primary" onclick="Desenvolvimento.salvarPDI('${id||''}')">Salvar</button>
         </div>
       </div>`;
     document.body.appendChild(overlay);
@@ -2160,87 +2222,16 @@ const Desenvolvimento = {
     const status = document.getElementById('pdi-status').value;
     const erro   = document.getElementById('pdi-erro');
     if (!titulo) { erro.textContent = 'Informe o título.'; return; }
-
     const dados = {
-      uid: App.currentUser.uid,
-      nome: App.currentUserData.nome,
-      setor: App.currentUserData.setor || '',
+      uid: App.currentUser.uid, nome: App.currentUserData.nome,
+      departamento: App.currentUserData.departamento || '',
       titulo, descricao: desc, prazo, status,
       atualizadoEm: firebase.firestore.FieldValue.serverTimestamp()
     };
-    if (id) {
-      await db.collection('pdis').doc(id).update(dados);
-    } else {
-      dados.criadoEm = firebase.firestore.FieldValue.serverTimestamp();
-      await db.collection('pdis').add(dados);
-    }
+    if (id) { await db.collection('pdis').doc(id).update(dados); }
+    else    { dados.criadoEm = firebase.firestore.FieldValue.serverTimestamp(); await db.collection('pdis').add(dados); }
     document.getElementById('modal-pdi').remove();
     this.render();
-  },
-
-  // ─── VER TODOS OS FEEDBACKS (gestor) ────────
-
-  async verTodosFeedbacks() {
-    const setor = App.meuSetor();
-    const equipSnap = await db.collection('usuarios').get();
-    const nomeMap = {};
-    const equipUids = equipSnap.docs
-      .map(d => d.data())
-      .filter(u => !setor || u.setor === setor)
-      .map(u => { nomeMap[u.uid] = u.nome; return u.uid; });
-
-    const fbAll = await db.collection('feedbacks').get();
-    const feedbacks = fbAll.docs
-      .map(d => ({ id: d.id, ...d.data() }))
-      .filter(f => equipUids.includes(f.destinatario_uid))
-      .sort((a, b) => (b.criadoEm?.seconds || 0) - (a.criadoEm?.seconds || 0))
-      .map(f => ({ ...f, destinatario_nome: nomeMap[f.destinatario_uid] || '?' }));
-
-    // Agrupa por colaborador
-    const porColab = {};
-    feedbacks.forEach(f => {
-      if (!porColab[f.destinatario_uid]) porColab[f.destinatario_uid] = { nome: f.destinatario_nome, feedbacks: [] };
-      porColab[f.destinatario_uid].feedbacks.push(f);
-    });
-
-    const overlay = document.createElement('div');
-    overlay.className = 'modal-overlay';
-    overlay.id = 'modal-todos-fb';
-    overlay.innerHTML = `
-      <div class="modal" style="max-width:620px">
-        <div class="modal-header">
-          <h3>Feedbacks da equipe</h3>
-          <button class="btn-icon" onclick="document.getElementById('modal-todos-fb').remove()"><i class="ti ti-x"></i></button>
-        </div>
-        <div class="modal-body" style="max-height:72vh;overflow-y:auto">
-          ${Object.values(porColab).map(c => `
-            <div style="margin-bottom:24px">
-              <div style="display:flex;align-items:center;gap:10px;margin-bottom:10px">
-                <div style="width:32px;height:32px;border-radius:50%;background:var(--accent-bg);color:var(--accent);display:flex;align-items:center;justify-content:center;font-size:12px;font-weight:600">
-                  ${App.initials(c.nome)}
-                </div>
-                <div>
-                  <p style="font-weight:600;font-size:14px">${c.nome}</p>
-                  <p style="font-size:11px;color:var(--text-3)">${c.feedbacks.length} feedback${c.feedbacks.length !== 1 ? 's' : ''} · ${c.feedbacks.filter(f=>f.tipo==='positivo').length} positivos · ${c.feedbacks.filter(f=>f.tipo==='melhoria').length} melhorias</p>
-                </div>
-              </div>
-              ${c.feedbacks.map(f => `
-                <div class="feedback-card" style="margin-left:42px">
-                  <div class="feedback-header">
-                    <span class="feedback-tipo">${f.tipo === 'positivo' ? '👍 Positivo' : f.tipo === 'melhoria' ? '💡 Melhoria' : '💬 Geral'}</span>
-                    <span class="feedback-data">${Desenvolvimento.fmtTs(f.criadoEm)}</span>
-                  </div>
-                  <p class="feedback-texto">${f.mensagem}</p>
-                  <p class="feedback-de">— Anônimo</p>
-                </div>`).join('')}
-            </div>`).join('')}
-          ${Object.keys(porColab).length === 0 ? '<p class="dev-empty">Nenhum feedback registrado ainda</p>' : ''}
-        </div>
-        <div class="modal-footer">
-          <button class="btn-primary" onclick="document.getElementById('modal-todos-fb').remove()">Fechar</button>
-        </div>
-      </div>`;
-    document.body.appendChild(overlay);
   },
 
   // ─── UTILS ──────────────────────────────────

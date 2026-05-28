@@ -947,3 +947,10 @@ textarea.inp { resize: vertical; }
   font-size: 9px;
   margin-left: 2px;
 }
+
+/* ─── CICLO ENCERRADO ─── */
+.ciclo-encerrado {
+  opacity: 0.75;
+  background: var(--bg);
+}
+.ciclo-encerrado .ciclo-nome { color: var(--text-2); }
