@@ -220,6 +220,7 @@ const App = {
             </a>
             <a class="nav-item" onclick="App.showPage('desenvolvimento')" data-page="desenvolvimento">
               <i class="ti ti-road"></i> Desenvolvimento
+              <span id="badge-desenv" style="display:none;margin-left:auto;min-width:18px;height:18px;background:var(--danger);color:#fff;border-radius:9px;font-size:10px;font-weight:700;display:inline-flex;align-items:center;justify-content:center;padding:0 4px"></span>
             </a>
             ${isGestor ? `
             <div class="nav-section">Gestão</div>
@@ -248,6 +249,39 @@ const App = {
       </div>
     `;
     this.showPage('calendario');
+    this.carregarNotificacoes();
+  },
+
+  async carregarNotificacoes() {
+    const uid = App.currentUser.uid;
+    let total = 0;
+
+    // Avaliações 360 pendentes para mim
+    try {
+      const snap = await db.collection('avaliacoes_360')
+        .where('avaliador_uid', '==', uid).where('status', '==', 'pendente').get();
+      total += snap.size;
+    } catch(e) {}
+
+    // Ciclos ativos onde sou o colaborador e ainda não fiz autoavaliação
+    try {
+      const snap2 = await db.collection('ciclos')
+        .where('colaborador_uid', '==', uid).where('status', '!=', 'encerrado').get();
+      snap2.docs.forEach(d => {
+        const c = d.data();
+        if (!c.avaliacoes?.[uid + '_auto']) total++;
+      });
+    } catch(e) {}
+
+    const badge = document.getElementById('badge-desenv');
+    if (badge) {
+      if (total > 0) {
+        badge.textContent = total > 9 ? '9+' : total;
+        badge.style.display = 'inline-flex';
+      } else {
+        badge.style.display = 'none';
+      }
+    }
   },
 
   showPage(page) {
@@ -313,27 +347,25 @@ const Calendario = {
     const isGestor = App.currentUserData.papel === 'gestor' || App.currentUserData.papel === 'admin';
     const fimMes = new Date(App.currentYear, App.currentMonth + 1, 0).toISOString().split('T')[0];
     const iniMes = new Date(App.currentYear, App.currentMonth, 1).toISOString().split('T')[0];
+    const dept = App.currentUserData.departamento || '';
 
-    let solicitacoes = [];
+    // Busca solicitações aprovadas do departamento
+    const snap = await db.collection('solicitacoes').where('status', '==', 'aprovado').get();
+    const solicitacoes = snap.docs
+      .map(d => ({ id: d.id, ...d.data() }))
+      .filter(s => s.data_inicio <= fimMes && s.data_fim >= iniMes && (!dept || s.departamento === dept));
 
-    if (isGestor) {
-      // Gestor vê apenas o setor dele — aprovadas
-      const setor = App.meuSetor();
-      const snap = await db.collection('solicitacoes').where('status', '==', 'aprovado').get();
-      // Filtra por setor no cliente
-      solicitacoes = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(s => s.data_inicio <= fimMes && s.data_fim >= iniMes && (!setor || s.setor === setor));
-    } else {
-      // Colaborador vê os dias ocupados do próprio setor (sem nome), mais as próprias solicitações
-      const setor = App.currentUserData.setor || '';
-      const snap = await db.collection('solicitacoes').where('status', '==', 'aprovado').get();
-      solicitacoes = snap.docs
-        .map(d => ({ id: d.id, ...d.data() }))
-        .filter(s => s.data_inicio <= fimMes && s.data_fim >= iniMes && (!setor || s.setor === setor));
-    }
+    // Busca dias bloqueados do departamento (sem filtro no Firestore — evita índice)
+    const bloqSnap = await db.collection('dias_bloqueados').get();
+    const bloqueados = {};
+    bloqSnap.docs.forEach(d => {
+      const b = d.data();
+      if (!dept || !b.departamento || b.departamento === dept) {
+        bloqueados[b.data] = b.motivo || 'Bloqueado';
+      }
+    });
 
-    this.renderCalendario(solicitacoes, isGestor);
+    this.renderCalendario(solicitacoes, isGestor, bloqueados);
   },
 
   renderCalendario(solicitacoes, isGestor, bloqueados = {}) {
@@ -1539,7 +1571,7 @@ const Desenvolvimento = {
       return;
     }
 
-    await db.collection('ciclos').add({
+    const novoDoc = await db.collection('ciclos').add({
       nome, periodo,
       colaborador_uid:  colUid,
       colaborador_nome: colNome,
@@ -1558,7 +1590,9 @@ const Desenvolvimento = {
     });
 
     document.getElementById('modal-ciclo').remove();
-    this.render();
+    // Abre o painel do ciclo e já dispara a configuração dos avaliadores
+    await this.abrirPainelCiclo(novoDoc.id);
+    this.openConfigurar360(novoDoc.id, colUid, colNome);
   },
 
   async encerrarCiclo(id, nome) {
