@@ -1703,10 +1703,39 @@ const Desenvolvimento = {
 
         ${liberado ? `
         <div class="ciclo-card">
-          <p style="font-weight:600;margin-bottom:8px"><i class="ti ti-check"></i> Resultado liberado para ${colNome}</p>
-          <button class="btn-secondary" onclick="Desenvolvimento.openConsolidado('${cicloId}', '${colUid}')">
-            <i class="ti ti-eye"></i> Ver consolidado
-          </button>
+          <p style="font-weight:600;margin-bottom:12px"><i class="ti ti-check"></i> Resultado liberado para ${colNome}</p>
+
+          ${(ciclo.pdis_ciclo?.[colUid] || []).length > 0 ? `
+          <p style="font-size:12px;font-weight:600;color:var(--text-2);margin-bottom:8px;text-transform:uppercase;letter-spacing:0.05em">PDI</p>
+          ${(ciclo.pdis_ciclo?.[colUid] || []).map((p, i) => {
+            // Busca status real da coleção pdis
+            return `<div class="pdi-status-row" id="pdi-row-${i}" data-uid="${colUid}" data-titulo="${p.titulo.replace(/"/g,'&quot;')}">
+              <span class="pdi-titulo" style="font-size:13px">${p.titulo}</span>
+              <span class="badge badge-default pdi-status-badge" id="pdi-status-${i}">Carregando...</span>
+              ${p.prazo ? `<span style="font-size:11px;color:var(--text-3)"><i class="ti ti-calendar"></i> ${App.formatDate(p.prazo)}</span>` : ''}
+            </div>`;
+          }).join('')}
+          <script>
+            (async () => {
+              const rows = document.querySelectorAll('[data-uid="${colUid}"]');
+              for (let i = 0; i < rows.length; i++) {
+                const titulo = rows[i].dataset.titulo;
+                const snap = await db.collection('pdis').where('uid','==','${colUid}').where('titulo','==',titulo).get();
+                const badge = document.getElementById('pdi-status-' + i);
+                if (badge && !snap.empty) {
+                  const st = snap.docs[0].data().status || 'pendente';
+                  badge.textContent = st === 'concluido' ? 'Concluído' : st === 'em_andamento' ? 'Em andamento' : 'Pendente';
+                  badge.className = 'badge ' + (st === 'concluido' ? 'badge-success' : st === 'em_andamento' ? 'badge-warning' : 'badge-default') + ' pdi-status-badge';
+                }
+              }
+            })();
+          </script>` : '<p style="font-size:13px;color:var(--text-3)">Nenhum PDI cadastrado</p>'}
+
+          <div style="margin-top:14px;padding-top:12px;border-top:1px solid var(--border)">
+            <button class="btn-secondary" onclick="Desenvolvimento.openConsolidado('${cicloId}', '${colUid}')">
+              <i class="ti ti-eye"></i> Ver consolidado completo
+            </button>
+          </div>
         </div>` : ''}
 
       </div>
