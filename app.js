@@ -320,7 +320,7 @@ const App = {
   },
 
   tipoLabel(tipo) {
-    const map = { ferias: 'Férias', folga: 'Folga', atestado: 'Atestado', banco_horas: 'Banco de horas' };
+    const map = { ferias: 'Férias', folga: 'Folga', atestado: 'Consulta médica', banco_horas: 'Banco de horas' };
     return map[tipo] || tipo;
   },
 
@@ -438,7 +438,7 @@ const Calendario = {
       <div class="page-header">
         <div>
           <h1 class="page-title">Calendário</h1>
-          <p class="page-sub">Férias, folgas e atestados${u.departamento ? ' · ' + u.departamento : ''}</p>
+          <p class="page-sub">Férias, folgas e consultas${u.departamento ? ' · ' + u.departamento : ''}</p>
         </div>
         <button class="btn-primary" onclick="Solicitacoes.openNova()">
           <i class="ti ti-plus"></i> Nova solicitação
@@ -457,7 +457,7 @@ const Calendario = {
       <div class="cal-legenda">
         <span class="leg-item"><span class="leg-dot ev-ferias"></span> Férias</span>
         <span class="leg-item"><span class="leg-dot ev-folga"></span> Folga</span>
-        <span class="leg-item"><span class="leg-dot ev-atestado"></span> Atestado</span>
+        <span class="leg-item"><span class="leg-dot ev-atestado"></span> Consulta</span>
       </div>
     `;
   },
@@ -550,7 +550,7 @@ const Solicitacoes = {
       <div class="page-header">
         <div>
           <h1 class="page-title">Minhas solicitações</h1>
-          <p class="page-sub">Histórico de férias, folgas e atestados</p>
+          <p class="page-sub">Histórico de solicitações</p>
         </div>
         <button class="btn-primary" onclick="Solicitacoes.openNova()">
           <i class="ti ti-plus"></i> Nova solicitação
@@ -596,7 +596,7 @@ const Solicitacoes = {
           <select class="inp" id="sol-tipo" onchange="Solicitacoes.onTipoChange()">
             <option value="ferias">Férias</option>
             <option value="folga">Folga avulsa</option>
-            <option value="atestado">Atestado médico</option>
+            <option value="atestado">Consulta médica</option>
           </select>
 
           <label class="form-label" style="margin-top:12px">Período</label>
@@ -738,23 +738,25 @@ const Solicitacoes = {
       dados = { data_inicio: data, data_fim: data, dias: 0, horas, hora_inicio: horaIni, hora_fim: horaFim, modo: 'horario' };
     }
 
-    // Verifica se alguma data está bloqueada
-    const dept = App.currentUserData.departamento || '';
-    const bloqSnap2 = await db.collection('dias_bloqueados').get();
-    const diasBloq = bloqSnap2.docs.map(d => d.data()).filter(b => !dept || b.departamento === dept);
-    if (isDia) {
-      let dataCheck = new Date(document.getElementById('sol-inicio').value + 'T12:00:00');
-      const dataFimCheck = new Date(document.getElementById('sol-fim').value + 'T12:00:00');
-      while (dataCheck <= dataFimCheck) {
-        const k = dataCheck.toISOString().split('T')[0];
-        const bloq = diasBloq.find(b => b.data === k);
-        if (bloq) { erro.textContent = `O dia ${App.formatDate(k)} está bloqueado: ${bloq.motivo}`; return; }
-        dataCheck.setDate(dataCheck.getDate() + 1);
+    // Verifica dias bloqueados (férias não são afetadas)
+    if (tipo !== 'ferias') {
+      const dept = App.currentUserData.departamento || '';
+      const bloqSnap2 = await db.collection('dias_bloqueados').get();
+      const diasBloq = bloqSnap2.docs.map(d => d.data()).filter(b => !dept || b.departamento === dept);
+      if (isDia) {
+        let dataCheck = new Date(document.getElementById('sol-inicio').value + 'T12:00:00');
+        const dataFimCheck = new Date(document.getElementById('sol-fim').value + 'T12:00:00');
+        while (dataCheck <= dataFimCheck) {
+          const k = dataCheck.toISOString().split('T')[0];
+          const bloq = diasBloq.find(b => b.data === k);
+          if (bloq) { erro.textContent = `O dia ${App.formatDate(k)} está bloqueado: ${bloq.motivo}`; return; }
+          dataCheck.setDate(dataCheck.getDate() + 1);
+        }
+      } else {
+        const k2 = document.getElementById('sol-data-hora').value;
+        const bloq2 = diasBloq.find(b => b.data === k2);
+        if (bloq2) { erro.textContent = `O dia ${App.formatDate(k2)} está bloqueado: ${bloq2.motivo}`; return; }
       }
-    } else {
-      const k2 = document.getElementById('sol-data-hora').value;
-      const bloq2 = diasBloq.find(b => b.data === k2);
-      if (bloq2) { erro.textContent = `O dia ${App.formatDate(k2)} está bloqueado: ${bloq2.motivo}`; return; }
     }
 
     erro.textContent = '';
@@ -905,9 +907,12 @@ const Aprovacoes = {
     main.innerHTML = `
       <div class="page-header">
         <div>
-          <h1 class="page-title">Aprovações pendentes</h1>
-          <p class="page-sub">${lista.length} solicitação${lista.length !== 1 ? 'ões' : ''} aguardando${depto ? ' · ' + depto : ''}</p>
+          <h1 class="page-title">Aprovações</h1>
+          <p class="page-sub">${lista.length} solicitação${lista.length !== 1 ? 'ões' : ''} pendente${lista.length !== 1 ? 's' : ''}${depto ? ' · ' + depto : ''}</p>
         </div>
+        <button class="btn-secondary" onclick="Aprovacoes.openRelatorio()">
+          <i class="ti ti-file-analytics"></i> Relatório
+        </button>
       </div>
       ${lista.length === 0
         ? `<div class="empty-state">
@@ -964,6 +969,183 @@ const Aprovacoes = {
       reprovadoEm: firebase.firestore.FieldValue.serverTimestamp()
     });
     this.render();
+  },
+
+  openRelatorio() {
+    const overlay = document.createElement('div');
+    overlay.className = 'modal-overlay';
+    overlay.id = 'modal-relatorio';
+    overlay.innerHTML = `
+      <div class="modal" style="max-width:560px">
+        <div class="modal-header">
+          <h3><i class="ti ti-file-analytics"></i> Relatório de solicitações</h3>
+          <button class="btn-icon" onclick="document.getElementById('modal-relatorio').remove()"><i class="ti ti-x"></i></button>
+        </div>
+        <div class="modal-body">
+          <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
+            <div>
+              <label class="form-label">Data início</label>
+              <input class="inp" type="date" id="rel-inicio">
+            </div>
+            <div>
+              <label class="form-label">Data fim</label>
+              <input class="inp" type="date" id="rel-fim">
+            </div>
+          </div>
+          <label class="form-label" style="margin-top:12px">Nome do colaborador (opcional)</label>
+          <input class="inp" id="rel-nome" placeholder="Buscar por nome...">
+          <label class="form-label" style="margin-top:12px">Tipo</label>
+          <select class="inp" id="rel-tipo">
+            <option value="">Todos</option>
+            <option value="ferias">Férias</option>
+            <option value="folga">Folga</option>
+            <option value="atestado">Consulta médica</option>
+          </select>
+          <label class="form-label" style="margin-top:12px">Status</label>
+          <select class="inp" id="rel-status">
+            <option value="">Todos</option>
+            <option value="aprovado">Aprovado</option>
+            <option value="reprovado">Reprovado</option>
+            <option value="pendente">Pendente</option>
+          </select>
+          <p id="rel-erro" style="color:#E24B4A;font-size:13px;margin:8px 0 0;min-height:16px"></p>
+        </div>
+        <div class="modal-footer">
+          <button class="btn-secondary" onclick="document.getElementById('modal-relatorio').remove()">Cancelar</button>
+          <button class="btn-primary" onclick="Aprovacoes.gerarRelatorio()">
+            <i class="ti ti-search"></i> Gerar relatório
+          </button>
+        </div>
+      </div>`;
+    document.body.appendChild(overlay);
+  },
+
+  async gerarRelatorio() {
+    const inicio  = document.getElementById('rel-inicio').value;
+    const fim     = document.getElementById('rel-fim').value;
+    const nome    = document.getElementById('rel-nome').value.trim().toLowerCase();
+    const tipo    = document.getElementById('rel-tipo').value;
+    const status  = document.getElementById('rel-status').value;
+    const erro    = document.getElementById('rel-erro');
+
+    erro.textContent = 'Buscando...';
+
+    try {
+      const depto = App.currentUserData.departamento || '';
+      const snap = await db.collection('solicitacoes').get();
+      let lista = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      // Filtros
+      if (depto)   lista = lista.filter(s => !s.departamento || s.departamento === depto);
+      if (inicio)  lista = lista.filter(s => s.data_inicio >= inicio);
+      if (fim)     lista = lista.filter(s => s.data_inicio <= fim);
+      if (nome)    lista = lista.filter(s => (s.nome || '').toLowerCase().includes(nome));
+      if (tipo)    lista = lista.filter(s => s.tipo === tipo);
+      if (status)  lista = lista.filter(s => s.status === status);
+
+      lista.sort((a, b) => a.data_inicio?.localeCompare(b.data_inicio));
+
+      if (lista.length === 0) { erro.textContent = 'Nenhum resultado encontrado.'; return; }
+
+      erro.textContent = '';
+
+      // Monta HTML do relatório
+      const totalAprov  = lista.filter(s => s.status === 'aprovado').length;
+      const totalReprov = lista.filter(s => s.status === 'reprovado').length;
+      const totalPend   = lista.filter(s => s.status === 'pendente').length;
+
+      document.getElementById('modal-relatorio').innerHTML = `
+        <div class="modal" style="max-width:700px">
+          <div class="modal-header">
+            <h3><i class="ti ti-file-analytics"></i> Relatório — ${lista.length} resultado${lista.length !== 1 ? 's' : ''}</h3>
+            <div style="display:flex;gap:8px">
+              <button class="btn-secondary" style="font-size:12px" onclick="Aprovacoes.openRelatorio()"><i class="ti ti-arrow-left"></i> Filtrar</button>
+              <button class="btn-secondary" style="font-size:12px" onclick="Aprovacoes.imprimirRelatorio()"><i class="ti ti-printer"></i> Imprimir</button>
+              <button class="btn-icon" onclick="document.getElementById('modal-relatorio').remove()"><i class="ti ti-x"></i></button>
+            </div>
+          </div>
+          <div class="modal-body" style="max-height:70vh;overflow-y:auto" id="rel-conteudo">
+
+            <!-- Resumo -->
+            <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:10px;margin-bottom:20px">
+              <div style="text-align:center;padding:12px;background:var(--success-bg);border-radius:var(--radius);border:1px solid var(--border)">
+                <p style="font-size:11px;color:var(--success);font-weight:600;margin-bottom:4px">APROVADAS</p>
+                <p style="font-size:22px;font-weight:700;color:var(--success)">${totalAprov}</p>
+              </div>
+              <div style="text-align:center;padding:12px;background:var(--warning-bg);border-radius:var(--radius);border:1px solid var(--border)">
+                <p style="font-size:11px;color:var(--warning);font-weight:600;margin-bottom:4px">PENDENTES</p>
+                <p style="font-size:22px;font-weight:700;color:var(--warning)">${totalPend}</p>
+              </div>
+              <div style="text-align:center;padding:12px;background:var(--danger-bg);border-radius:var(--radius);border:1px solid var(--border)">
+                <p style="font-size:11px;color:var(--danger);font-weight:600;margin-bottom:4px">REPROVADAS</p>
+                <p style="font-size:22px;font-weight:700;color:var(--danger)">${totalReprov}</p>
+              </div>
+            </div>
+
+            <!-- Tabela -->
+            <table class="table" style="font-size:12.5px">
+              <thead>
+                <tr>
+                  <th>Colaborador</th>
+                  <th>Tipo</th>
+                  <th>Início</th>
+                  <th>Fim</th>
+                  <th>Período</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${lista.map(s => `
+                  <tr>
+                    <td>
+                      <p style="font-weight:500">${s.nome || '—'}</p>
+                      <p style="font-size:11px;color:var(--text-3)">${s.funcao || ''}</p>
+                    </td>
+                    <td><span class="tipo-pill tipo-${s.tipo}">${App.tipoLabel(s.tipo)}</span></td>
+                    <td>${App.formatDate(s.data_inicio)}</td>
+                    <td>${App.formatDate(s.data_fim)}</td>
+                    <td>${s.modo === 'horario' ? s.hora_inicio + '–' + s.hora_fim : s.dias + 'd'}</td>
+                    <td>${App.statusBadge(s.status)}</td>
+                  </tr>`).join('')}
+              </tbody>
+            </table>
+          </div>
+          <div class="modal-footer">
+            <button class="btn-primary" onclick="document.getElementById('modal-relatorio').remove()">Fechar</button>
+          </div>
+        </div>`;
+    } catch(e) {
+      erro.textContent = 'Erro: ' + e.message;
+    }
+  },
+
+  imprimirRelatorio() {
+    const conteudo = document.getElementById('rel-conteudo')?.innerHTML;
+    if (!conteudo) return;
+    const win = window.open('', '_blank');
+    win.document.write(`
+      <html><head><title>Relatório Capacita</title>
+      <style>
+        body { font-family: Arial, sans-serif; font-size: 13px; padding: 24px; color: #111; }
+        table { width: 100%; border-collapse: collapse; margin-top: 16px; }
+        th { background: #f3f4f6; padding: 8px 12px; text-align: left; font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; border-bottom: 2px solid #e5e7eb; }
+        td { padding: 9px 12px; border-bottom: 1px solid #e5e7eb; }
+        .resumo { display: flex; gap: 16px; margin-bottom: 20px; }
+        .resumo-card { flex: 1; padding: 12px; border: 1px solid #e5e7eb; border-radius: 8px; text-align: center; }
+        .badge { padding: 2px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; }
+        .badge-success { background: #C8EDE0; color: #136B4E; }
+        .badge-warning { background: #F5DFB8; color: #8A5210; }
+        .badge-danger  { background: #F8D0D0; color: #C0201F; }
+        .badge-default { background: #E5E7EB; color: #3D3D38; }
+        @media print { body { padding: 0; } }
+      </style></head>
+      <body>
+        <h2 style="margin-bottom:4px">Relatório de Solicitações</h2>
+        <p style="color:#6B6B64;margin-bottom:20px;font-size:12px">Capacita · ${new Date().toLocaleDateString('pt-BR')}</p>
+        ${conteudo}
+      </body></html>`);
+    win.document.close();
+    win.print();
   }
 };
 
