@@ -1060,6 +1060,7 @@ const Aprovacoes = {
             <h3><i class="ti ti-file-analytics"></i> Relatório — ${lista.length} resultado${lista.length !== 1 ? 's' : ''}</h3>
             <div style="display:flex;gap:8px">
               <button class="btn-secondary" style="font-size:12px" onclick="Aprovacoes.openRelatorio()"><i class="ti ti-arrow-left"></i> Filtrar</button>
+              <button class="btn-secondary" style="font-size:12px" onclick="Aprovacoes.exportarExcel()"><i class="ti ti-file-spreadsheet"></i> Excel</button>
               <button class="btn-secondary" style="font-size:12px" onclick="Aprovacoes.imprimirRelatorio()"><i class="ti ti-printer"></i> Imprimir</button>
               <button class="btn-icon" onclick="document.getElementById('modal-relatorio').remove()"><i class="ti ti-x"></i></button>
             </div>
@@ -1117,6 +1118,40 @@ const Aprovacoes = {
     } catch(e) {
       erro.textContent = 'Erro: ' + e.message;
     }
+  },
+
+  exportarExcel() {
+    if (typeof XLSX === 'undefined') {
+      alert('Biblioteca Excel não carregada. Verifique sua conexão e tente novamente.');
+      return;
+    }
+    // Coleta dados da tabela visível
+    const rows = document.querySelectorAll('#rel-conteudo table tbody tr');
+    if (!rows.length) { alert('Nenhum dado para exportar.'); return; }
+
+    const dados = [['Colaborador', 'Função', 'Tipo', 'Data início', 'Data fim', 'Período', 'Status']];
+    rows.forEach(tr => {
+      const tds = tr.querySelectorAll('td');
+      if (tds.length < 6) return;
+      const colab   = tds[0].querySelector('p')?.textContent?.trim() || tds[0].textContent.trim();
+      const funcao  = tds[0].querySelectorAll('p')[1]?.textContent?.trim() || '';
+      const tipo    = tds[1].textContent.trim();
+      const inicio  = tds[2].textContent.trim();
+      const fim     = tds[3].textContent.trim();
+      const periodo = tds[4].textContent.trim();
+      const status  = tds[5].textContent.trim();
+      dados.push([colab, funcao, tipo, inicio, fim, periodo, status]);
+    });
+
+    const ws = XLSX.utils.aoa_to_sheet(dados);
+    // Largura das colunas
+    ws['!cols'] = [{ wch: 28 }, { wch: 18 }, { wch: 16 }, { wch: 12 }, { wch: 12 }, { wch: 14 }, { wch: 12 }];
+
+    const wb = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(wb, ws, 'Solicitações');
+
+    const data = new Date().toLocaleDateString('pt-BR').replace(/\//g, '-');
+    XLSX.writeFile(wb, `relatorio-capacita-${data}.xlsx`);
   },
 
   imprimirRelatorio() {
@@ -1468,10 +1503,11 @@ const Desenvolvimento = {
 
   renderCicloCardGestor(ciclo, encerrado = false) {
     const etapaLabel = {
-      auto: 'Aguardando autoavaliação',
-      '360': 'Avaliação 360° em andamento',
-      gestor: 'Aguardando avaliação do gestor',
+      auto:      'Aguardando autoavaliação',
+      '360':     'Avaliação 360° em andamento',
+      gestor:    'Aguardando avaliação do gestor',
       resultado: 'Resultado disponível',
+      conversa:  'Aguardando registro de conversa',
       encerrado: 'Encerrado'
     };
     const etapa = ciclo.status === 'encerrado' ? 'encerrado' : (ciclo.etapa_atual || 'auto');
@@ -1668,16 +1704,37 @@ const Desenvolvimento = {
   },
 
   renderEtapasColab(ciclo, uid) {
-    const etapas = [
-      { key: 'auto', label: 'Autoavaliação' },
-      { key: '360',  label: 'Avaliação 360°' },
-      { key: 'gestor', label: 'Avaliação do gestor' },
+    const etapasAtivas = ciclo.etapas_ativas || ['auto','360','gestor'];
+    const todasEtapas = [
+      { key: 'auto',      label: 'Autoavaliação' },
+      { key: '360',       label: 'Avaliação 360°' },
+      { key: 'gestor',    label: 'Av. gestor' },
       { key: 'resultado', label: 'Resultado' }
     ];
-    const atual = ciclo.etapa_atual || 'auto';
+
+    // Se ciclo simplificado (sem etapas), mostra só conversa + PDI
+    if (etapasAtivas.length === 0) {
+      return `
+        <div class="ciclo-etapas" style="margin-bottom:12px">
+          <div class="etapa-item ${ciclo.etapa_atual === 'conversa' ? 'ativa' : ''} ${ciclo.etapas_concluidas?.includes('conversa') ? 'concluida' : ''}">
+            <div class="etapa-dot">${ciclo.etapas_concluidas?.includes('conversa') ? '✓' : '1'}</div>
+            <span>Conversa</span>
+          </div>
+          <div class="etapa-linha"></div>
+          <div class="etapa-item ${ciclo.etapa_atual === 'resultado' ? 'ativa' : ''} ${ciclo.etapas_concluidas?.includes('resultado') ? 'concluida' : ''}">
+            <div class="etapa-dot">${ciclo.etapas_concluidas?.includes('resultado') ? '✓' : '2'}</div>
+            <span>PDI</span>
+          </div>
+        </div>`;
+    }
+
+    // Etapas configuradas + resultado
+    const etapasVisiveis = [...todasEtapas.filter(e => etapasAtivas.includes(e.key) || e.key === 'resultado')];
+    const atual = ciclo.etapa_atual || etapasAtivas[0] || 'conversa';
+
     return `
       <div class="ciclo-etapas" style="margin-bottom:12px">
-        ${etapas.map((e, i) => {
+        ${etapasVisiveis.map((e, i) => {
           const concluida = ciclo.etapas_concluidas?.includes(e.key);
           const ativa = atual === e.key;
           return `<div class="etapa-item ${ativa ? 'ativa' : ''} ${concluida ? 'concluida' : ''}">
@@ -1719,8 +1776,33 @@ const Desenvolvimento = {
           <label class="form-label" style="margin-top:12px">Período</label>
           <input class="inp" id="ciclo-periodo" placeholder="Ex: 1º Semestre 2025">
 
-          <div style="margin-top:14px;padding:12px;background:#F5F4F0;border-radius:8px;font-size:13px;color:#6B6B66">
-            <strong>Fluxo:</strong> Autoavaliação → Avaliação 360° pelos pares → Avaliação do gestor → Resultado
+          <label class="form-label" style="margin-top:16px">Etapas do ciclo</label>
+          <p style="font-size:12px;color:var(--text-3);margin-bottom:8px">Selecione as etapas que farão parte deste ciclo. Se nenhuma for selecionada, o ciclo terá apenas registro de conversa e PDI.</p>
+          <div style="display:flex;flex-direction:column;gap:8px">
+            <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;cursor:pointer">
+              <input type="checkbox" id="etapa-auto" value="auto" checked style="margin-top:2px">
+              <div>
+                <p style="font-weight:500;font-size:13px">Autoavaliação</p>
+                <p style="font-size:12px;color:var(--text-3)">O colaborador avalia seu próprio desempenho</p>
+              </div>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;cursor:pointer">
+              <input type="checkbox" id="etapa-360" value="360" checked style="margin-top:2px">
+              <div>
+                <p style="font-weight:500;font-size:13px">Avaliação 360°</p>
+                <p style="font-size:12px;color:var(--text-3)">Pares escolhidos avaliam anonimamente</p>
+              </div>
+            </label>
+            <label style="display:flex;align-items:flex-start;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;cursor:pointer">
+              <input type="checkbox" id="etapa-gestor" value="gestor" checked style="margin-top:2px">
+              <div>
+                <p style="font-weight:500;font-size:13px">Avaliação do gestor</p>
+                <p style="font-size:12px;color:var(--text-3)">Gestor avalia formalmente o colaborador</p>
+              </div>
+            </label>
+          </div>
+          <div id="ciclo-modo-info" style="margin-top:10px;padding:10px 12px;background:var(--accent-bg);border-radius:8px;font-size:12px;color:var(--accent)">
+            <i class="ti ti-info-circle"></i> Ciclo completo: Autoavaliação → 360° → Gestor → Resultado
           </div>
           <p id="ciclo-erro" style="color:#E24B4A;font-size:13px;margin:8px 0 0;min-height:16px"></p>
         </div>
@@ -1730,20 +1812,42 @@ const Desenvolvimento = {
         </div>
       </div>`;
     document.body.appendChild(overlay);
+
+    // Atualiza mensagem conforme etapas selecionadas
+    const checks = ['etapa-auto','etapa-360','etapa-gestor'];
+    const info = document.getElementById('ciclo-modo-info');
+    const atualizar = () => {
+      const sel = checks.filter(id => document.getElementById(id)?.checked).map(id => ({
+        'etapa-auto': 'Autoavaliação', 'etapa-360': '360°', 'etapa-gestor': 'Gestor'
+      })[id]);
+      if (sel.length === 0) {
+        info.innerHTML = '<i class="ti ti-message-circle"></i> Ciclo simplificado: apenas registro de conversa e PDI';
+        info.style.background = 'var(--warning-bg)';
+        info.style.color = 'var(--warning)';
+      } else {
+        info.innerHTML = `<i class="ti ti-info-circle"></i> Etapas: ${sel.join(' → ')} → Resultado`;
+        info.style.background = 'var(--accent-bg)';
+        info.style.color = 'var(--accent)';
+      }
+    };
+    checks.forEach(id => document.getElementById(id)?.addEventListener('change', atualizar));
   },
 
   async criarCiclo() {
-    const sel    = document.getElementById('ciclo-colab');
-    const colUid = sel.value;
+    const sel     = document.getElementById('ciclo-colab');
+    const colUid  = sel.value;
     const colNome = sel.options[sel.selectedIndex]?.dataset.nome || '';
     const nome    = document.getElementById('ciclo-nome').value.trim();
     const periodo = document.getElementById('ciclo-periodo').value.trim();
     const erro    = document.getElementById('ciclo-erro');
 
+    // Etapas selecionadas
+    const etapasSel = ['auto','360','gestor'].filter(e => document.getElementById('etapa-' + e)?.checked);
+
     if (!colUid) { erro.textContent = 'Selecione o colaborador.'; return; }
     if (!nome)   { erro.textContent = 'Informe o nome do ciclo.'; return; }
 
-    // Verifica se já existe ciclo ativo para esse colaborador
+    // Verifica ciclo ativo existente
     const existe = await db.collection('ciclos')
       .where('colaborador_uid', '==', colUid)
       .where('status', '!=', 'encerrado')
@@ -1752,6 +1856,9 @@ const Desenvolvimento = {
       erro.textContent = `${colNome} já possui um ciclo ativo. Encerre-o antes de criar outro.`;
       return;
     }
+
+    // Define primeira etapa com base nas selecionadas
+    const primeiraEtapa = etapasSel.length > 0 ? etapasSel[0] : 'conversa';
 
     const novoDoc = await db.collection('ciclos').add({
       nome, periodo,
@@ -1762,7 +1869,8 @@ const Desenvolvimento = {
       criado_por: App.currentUser.uid,
       criado_por_nome: App.currentUserData.nome,
       status: 'aberto',
-      etapa_atual: 'auto',
+      etapas_ativas: etapasSel,   // quais etapas foram ativadas
+      etapa_atual: primeiraEtapa,
       etapas_concluidas: [],
       config_360: {},
       avaliacoes: {},
@@ -1772,9 +1880,12 @@ const Desenvolvimento = {
     });
 
     document.getElementById('modal-ciclo').remove();
-    // Abre o painel do ciclo e já dispara a configuração dos avaliadores
+
+    // Se tiver 360 ativo, abre configuração; senão vai direto pro painel
     await this.abrirPainelCiclo(novoDoc.id);
-    this.openConfigurar360(novoDoc.id, colUid, colNome);
+    if (etapasSel.includes('360')) {
+      this.openConfigurar360(novoDoc.id, colUid, colNome);
+    }
   },
 
   async encerrarCiclo(id, nome) {
@@ -1865,7 +1976,7 @@ const Desenvolvimento = {
           <p style="font-size:13px;color:var(--text-2)"><i class="ti ti-clock"></i> Aguardando autoavaliação de <strong>${colNome}</strong></p>
         </div>` : ''}
 
-        ${prontoGest && !gestorAval ? `
+        ${(prontoGest || !(ciclo.etapas_ativas || ['auto','360','gestor']).includes('360')) && autoAval && !gestorAval && (ciclo.etapas_ativas || ['auto','360','gestor']).includes('gestor') ? `
         <div class="ciclo-card" style="border-color:var(--accent)">
           <p style="font-weight:600;margin-bottom:8px;color:var(--accent)"><i class="ti ti-clipboard-check"></i> Sua vez de avaliar!</p>
           <p style="font-size:13px;color:var(--text-2);margin-bottom:12px">Todos os pares já responderam. Faça sua avaliação de ${colNome}.</p>
